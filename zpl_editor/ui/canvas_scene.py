@@ -9,6 +9,7 @@ from ..elements.circle_element import CircleElement
 from ..elements.diagonal_line import DiagonalLineElement
 from ..elements.barcode_element import BarcodeElement
 from ..elements.qr_element import QRElement
+from ..elements.image_element import ImageElement
 from ..core.zpl_commands import ZPLElement
 from ..core.label_model import LabelModel
 
@@ -152,6 +153,14 @@ class CanvasScene(QGraphicsScene):
             orientation = props.get("orientation", "N")
             elem = QRElement(x, y, data, mag, qr_model, orientation)
             elem._properties = dict(props)
+            return elem
+
+        elif t == "image":
+            w = props.get("width", 100)
+            h = props.get("height", 100)
+            elem = ImageElement(x, y, w, h)
+            elem._properties = dict(props)
+            elem._update_size_from_properties()
             return elem
 
         return None

@@ -54,6 +54,8 @@ class ZPLGenerator:
             lines.extend(self._gen_barcode(elem, model))
         elif elem.element_type == "qrcode":
             lines.extend(self._gen_qrcode(elem))
+        elif elem.element_type == "image":
+            lines.extend(self._gen_image(elem))
 
         return lines
 
@@ -65,6 +67,7 @@ class ZPLGenerator:
             "diagonal": "Diagonal Line",
             "barcode": "Barcode Element",
             "qrcode": "QR Code Element",
+            "image": "Image/graphic region",
         }
         bc_type = elem.properties.get("barcode_type", "")
         if elem.element_type == "barcode" and bc_type:
@@ -226,6 +229,15 @@ class ZPLGenerator:
             return f"^BF{orientation},{height},{mode},{cols}"
 
         return f"^BC{orientation},{height},Y,N,N"
+
+    def _gen_image(self, elem: ZPLElement) -> list:
+        props = elem.properties
+        data = props.get("data", "")
+        bytes_per_row = props.get("bytes_per_row", 0)
+        total_bytes = props.get("total_bytes", 0)
+        if data and bytes_per_row and total_bytes:
+            return [f"^GFA,{total_bytes},{total_bytes},{bytes_per_row},{data}^FS"]
+        return ["^FS"]
 
     def _gen_qrcode(self, elem: ZPLElement) -> list:
         lines = []
