@@ -1,0 +1,847 @@
+# ZPL Visual Editor — Detaylı Geliştirme Prompt'u
+
+## Proje Özeti
+
+Python ve PyQt6 kullanarak, mevcut ZPL (Zebra Programming Language) kodunu görsel olarak düzenleyebilen, tam özellikli bir 2D etiket tasarım editörü geliştir. Program iki panelden oluşacak: solda ZPL kod editörü, sağda WYSIWYG (What You See Is What You Get) görsel canvas. Kullanıcı mevcut bir ZPL kodunu yapıştırdığında, program bunu parse edip canvas üzerinde görsel elementlere dönüştürecek. Kullanıcı bu elementleri mouse ile seçebilecek, sürükleyebilecek, boyutlandırabilecek ve düzenleyebilecek. Her görsel değişiklik anında ZPL koduna yansıyacak ve her ZPL kodu değişikliği anında görsele yansıyacak (bidirectional sync).
+
+---
+
+## Teknoloji Stack
+
+- **Dil:** Python 3.10+
+- **GUI Framework:** PyQt6
+- **Grafik Sistemi:** QGraphicsScene / QGraphicsView (zooming, panning, selection, transformation için)
+- **ZPL Parsing:** Custom regex-based parser
+- **Render Engine:** QPainter tabanlı custom rendering
+- **Barcode Generation:** `python-barcode` kütüphanesi (1D barkodlar için), custom renderer (Code128, Code39, EAN13 vb.)
+- **QR Code:** `qrcode` kütüphanesi
+- **Font Handling:** Zebra yerleşik fontları için bitmap font mapping + TrueType font desteği
+
+---
+
+## Uygulama Mimarisi
+
+### Ana Modüller
+
+```
+zpl_editor/
+├── main.py                    # Uygulama giriş noktası
+├── app.py                     # QApplication ve ana pencere
+├── ui/
+│   ├── main_window.py         # Ana pencere (QMainWindow) — splitter, menüler, toolbar
+│   ├── code_editor.py         # Sol panel — ZPL kod editörü (syntax highlighting)
+│   ├── canvas_view.py         # Sağ panel — QGraphicsView (zoom, pan, grid)
+│   ├── canvas_scene.py        # QGraphicsScene — elementlerin yönetimi
+│   ├── property_panel.py      # Sağ/alt panel — seçili elementin özellikleri
+│   ├── toolbar.py             # Üst araç çubuğu — çizim araçları
+│   └── statusbar.py           # Alt durum çubuğu — koordinat, zoom seviyesi
+├── core/
+│   ├── zpl_parser.py          # ZPL kodunu parse edip element listesine dönüştürme
+│   ├── zpl_generator.py       # Element listesinden ZPL kodu üretme
+│   ├── zpl_commands.py        # ZPL komut tanımları ve veri yapıları
+│   ├── label_model.py         # Etiket veri modeli (boyut, dpi, elementler)
+│   └── coordinate_system.py   # Dot-pixel dönüşüm, DPI yönetimi
+├── elements/
+│   ├── base_element.py        # Tüm elementlerin türediği abstract base class
+│   ├── text_element.py        # ^FD + ^A komutu — metin elementleri
+│   ├── barcode_element.py     # ^BC, ^B3, ^BY vb. — barkod elementleri
+│   ├── qr_element.py          # ^BQ — QR kod elementi
+│   ├── line_element.py        # ^GB (kutu/çizgi) — dikdörtgen, çizgi elementleri
+│   ├── box_element.py         # ^GB — dolgulu/dolgusuz kutular
+│   ├── circle_element.py      # ^GC — daire/elips elementleri
+│   ├── diagonal_line.py       # ^GD — çapraz çizgi
+│   ├── image_element.py       # ^GFA — grafik alan (bitmap image)
+│   └── field_element.py       # ^FO + ^FD — alan bazlı bileşik element
+├── graphics/
+│   ├── resizable_item.py      # QGraphicsItem — resize handle'ları olan base item
+│   ├── selection_handles.py   # 8 köşe + 4 kenar resize handle
+│   ├── grid_overlay.py        # Izgara çizgileri (snap-to-grid)
+│   ├── ruler.py               # Üst ve sol cetvel (mm/inch/dot)
+│   └── zoom_controller.py     # Zoom in/out/fit mantığı
+├── fonts/
+│   ├── zebra_fonts.py         # Zebra yerleşik font tanımları (Font 0-F, A-Z)
+│   └── font_mapper.py         # ZPL font ID → gerçek font eşleştirme
+├── utils/
+│   ├── undo_redo.py           # QUndoStack tabanlı undo/redo sistemi
+│   ├── clipboard.py           # Copy/paste işlemleri
+│   ├── export.py              # PNG, PDF export
+│   └── settings.py            # Uygulama ayarları (son dosya, DPI tercihi vb.)
+└── resources/
+    ├── icons/                 # Toolbar ikonları (SVG)
+    ├── fonts/                 # Zebra bitmap font verileri
+    └── styles/                # QSS tema dosyaları
+```
+
+---
+
+## Detaylı Modül Gereksinimleri
+
+### 1. Ana Pencere (`main_window.py`)
+
+Ana pencere, bir `QSplitter` ile iki ana paneli barındırır. Sol panel ZPL kod editörü, sağ panel görsel canvas'tır. Splitter oranı kullanıcı tarafından ayarlanabilir ve son konum hatırlanır.
+
+**Menü Yapısı:**
+- **Dosya:** Yeni Etiket, ZPL Aç, ZPL Kaydet, PNG/PDF Export, Çıkış
+- **Düzenle:** Geri Al (Ctrl+Z), Yinele (Ctrl+Y), Kes, Kopyala, Yapıştır, Tümünü Seç, Sil
+- **Görünüm:** Zoom In (Ctrl++), Zoom Out (Ctrl+-), Sığdır (Ctrl+0), Izgara Göster/Gizle, Cetvel Göster/Gizle, Karanlık/Açık Tema
+- **Etiket:** Etiket Boyutu Ayarla, DPI Ayarla (203/300/600), Döndür
+- **Ekle:** Metin, Barkod, QR Kod, Dikdörtgen, Çizgi, Daire, Görsel
+- **Yardım:** Hakkında, ZPL Referansı
+
+**Toolbar:**
+- Seçim Aracı (ok), Metin Aracı (T), Çizgi Aracı, Dikdörtgen Aracı, Daire Aracı, Barkod Aracı, QR Aracı
+- Hizalama butonları: Sola, Ortaya, Sağa, Üste, Ortaya (dikey), Alta hizala
+- Undo/Redo butonları
+- Zoom slider
+
+**Kısayollar:**
+- `Ctrl+Z` / `Ctrl+Y` — Undo/Redo
+- `Delete` — Seçili elementi sil
+- `Ctrl+D` — Seçili elementi klonla
+- `Ctrl+A` — Tümünü seç
+- `Arrow Keys` — Seçili elementi 1 dot kaydır
+- `Shift+Arrow` — 10 dot kaydır
+- `Ctrl+G` — Snap-to-grid toggle
+- `Ctrl+R` — ZPL'yi yeniden parse et (force refresh)
+- `Space + Drag` — Canvas pan
+- `Ctrl+Scroll` — Zoom
+
+---
+
+### 2. ZPL Kod Editörü (`code_editor.py`)
+
+`QPlainTextEdit` tabanlı, ZPL syntax highlighting destekli bir kod editörü.
+
+**Syntax Highlighting Kuralları:**
+- `^XA`, `^XZ` — Etiket başlangıç/bitiş → Koyu mavi, bold
+- `^FO` — Alan orijini → Yeşil
+- `^FD` — Alan verisi → Turuncu
+- `^A` — Font seçimi → Mor
+- `^BC`, `^B3`, `^BY`, `^BQ` — Barkod komutları → Kırmızı
+- `^GB`, `^GC`, `^GD` — Grafik komutları → Turkuaz
+- `^CF` — Varsayılan font → Mor
+- `^CI` — Karakter seti → Gri
+- `^PQ` — Yazdırma miktarı → Gri
+- Sayılar → Açık mavi
+- Virgüller (parametre ayırıcı) → Koyu gri
+
+**Özellikler:**
+- Satır numaraları
+- Mevcut satır vurgulama
+- Auto-completion (temel ZPL komutları için) — `^` yazınca komut listesi açılır
+- Bracket matching (`^` ... `,` grupları)
+- Gerçek zamanlı sync: Kod değiştiğinde 500ms debounce ile canvas güncellenir
+- Hata işaretleme: Parse edilemeyen satırlar kırmızı arka planla vurgulanır
+- Kod katlama (^XA...^XZ blokları)
+
+**Bidirectional Sync Mekanizması:**
+- Canvas'ta bir element değiştiğinde, ZPL kodu otomatik güncellenir. Güncelleme sırasında editördeki imleç pozisyonu ve seçim korunur.
+- Editörde kod değiştiğinde, 500ms debounce sonrası parser çalışır ve canvas güncellenir. Değişmeyen elementlerin canvas pozisyonları ve seçim durumları korunur.
+- Sync sırasında sonsuz döngüyü önlemek için bir `_syncing` flag kullanılır.
+
+---
+
+### 3. ZPL Parser (`zpl_parser.py`)
+
+ZPL kodunu parse edip element listesine dönüştüren modül. Bu modül projenin en kritik parçasıdır.
+
+**Desteklenmesi Gereken ZPL Komutları (Öncelik Sırasıyla):**
+
+**Öncelik 1 — Temel (Mutlaka):**
+- `^XA` / `^XZ` — Etiket başlangıç/bitiş
+- `^FO x,y` — Alan orijini (element pozisyonu)
+- `^FD data ^FS` — Alan verisi ve alan sonu
+- `^A font,orientation,height,width` — Font seçimi
+- `^CF font,height,width` — Varsayılan font
+- `^GB width,height,thickness,color,rounding` — Grafik kutu (çizgi ve dikdörtgen)
+- `^FT x,y` — Alan tipi (baseline konum)
+- `^CI charset` — Karakter set tanımı
+
+**Öncelik 2 — Barkod ve Grafik:**
+- `^BC orientation,height,interpretation,above,checkdigit` — Code 128 barkod
+- `^B3 orientation,checkdigit,height,interpretation,above` — Code 39 barkod
+- `^BY module_width,ratio,height` — Barkod varsayılanları
+- `^BQ orientation,model,magnification` — QR kod
+- `^GC diameter,thickness,color` — Grafik daire
+- `^GD width,height,thickness,color,orientation` — Grafik çapraz çizgi
+
+**Öncelik 3 — Gelişmiş:**
+- `^FB width,max_lines,line_spacing,alignment,hanging` — Alan bloğu (çok satırlı metin)
+- `^FW orientation` — Alan yönü
+- `^GFA format,total_bytes,row_bytes,rows,data` — Grafik alan (bitmap)
+- `^PW width` — Yazdırma genişliği
+- `^LL length` — Etiket uzunluğu
+- `^LH x,y` — Etiket home pozisyonu
+- `^FX comment` — Yorum satırı (göz ardı edilir)
+
+**Parser Algoritması:**
+
+```python
+def parse_zpl(zpl_code: str) -> LabelModel:
+    """
+    ZPL kodunu parse eder ve LabelModel döndürür.
+    
+    Algoritma:
+    1. ^XA ile ^XZ arasındaki kodu al
+    2. Kodu '^' karakterinden böl (her biri bir komut)
+    3. Her komutu komut_kodu + parametreler olarak ayır
+    4. State machine ile elementleri oluştur:
+       - ^FO görüldüğünde yeni element başlat, pozisyonu kaydet
+       - Sonraki komutlar (^A, ^FD, ^GB vb.) bu elemente özellik ekler
+       - ^FS görüldüğünde elementi tamamla
+    5. Global komutları (^PW, ^LL, ^CF, ^CI) etiket modeline uygula
+    """
+```
+
+**Önemli Parse Kuralları:**
+- Parametreler virgülle ayrılır ve boş bırakılabilir (varsayılan değer kullanılır): `^A0N,30,` → font=0, orientation=N, height=30, width=default
+- `^FO` her zaman yeni bir elementin başlangıcıdır
+- Bir `^FO` ile sonraki `^FS` arasındaki tüm komutlar aynı elemente aittir
+- `^FD` her zaman verinin kendisini içerir, `^FS` ile sonlanır
+- Birden fazla `^FD` olabilir (ender, ama mümkün)
+- `^GB` hem çizgi hem dikdörtgen olabilir: eğer width veya height 0 ise çizgidir
+- Koordinatlar dot cinsindendir (203 DPI'da 1 dot ≈ 0.125mm)
+
+---
+
+### 4. ZPL Generator (`zpl_generator.py`)
+
+Element listesinden ZPL kodu üretir. Parser'ın tersidir.
+
+**Kurallar:**
+- Her element için önce `^FO x,y` üret
+- Elementin tipine göre ilgili komutları üret
+- Metin elementi: `^A font,orientation,height,width ^FD text ^FS`
+- Kutu/çizgi: `^GB width,height,thickness,color,rounding ^FS`
+- Barkod: `^BY ... ^BC ... ^FD data ^FS`
+- Sonucu `^XA ... ^XZ` ile sarla
+- Global ayarları (^PW, ^LL, ^CF, ^CI, ^LH) etiketin başına ekle
+- Elementleri Y koordinatına göre sırala (yukarıdan aşağıya)
+- Okunabilirlik için her elementi yeni satıra yaz
+- Yorum olarak element tipini ekle: `^FX -- Text Element --`
+
+---
+
+### 5. Canvas View (`canvas_view.py`)
+
+`QGraphicsView` tabanlı görsel düzenleyici. Bu, kullanıcının etiketini gördüğü ve düzenlediği ana alandır.
+
+**Temel Özellikler:**
+
+**Zoom:**
+- `Ctrl + Mouse Wheel` ile zoom in/out
+- Minimum %10, maksimum %3000
+- Zoom seviyesi statusbar'da gösterilir
+- "Fit to Window" seçeneği (Ctrl+0)
+- Zoom slider toolbar'da
+
+**Pan (Kaydırma):**
+- `Space + Sol Tık Sürükle` ile canvas'ı kaydır (Photoshop tarzı)
+- Ortadaki mouse tuşu ile de pan yapılabilir
+- Scrollbar'lar ile de kaydırılabilir
+
+**Grid (Izgara):**
+- Açılıp kapatılabilir ızgara
+- Snap-to-grid özelliği (Ctrl+G ile toggle)
+- Grid spacing ayarlanabilir (varsayılan 10 dot)
+- Ana çizgiler kalın, ara çizgiler ince (major/minor grid)
+
+**Ruler (Cetvel):**
+- Üstte yatay, solda dikey cetvel
+- Birim: dot, mm, veya inch (ayarlanabilir)
+- Mouse pozisyonunu cetvel üzerinde takip eder
+
+**Arka Plan:**
+- Etiket alanı beyaz dikdörtgen olarak çizilir
+- Etiket dışı alan açık gri (çalışma alanı)
+- Etiket kenarları kesik çizgi ile gösterilir
+
+---
+
+### 6. Grafik Elementler (`elements/`)
+
+Her element `QGraphicsItem` tabanlıdır ve aşağıdaki ortak özelliklere sahiptir:
+
+**Base Element (`base_element.py`):**
+
+```python
+class BaseElement(QGraphicsItem):
+    """
+    Tüm ZPL elementlerinin base class'ı.
+    
+    Ortak özellikler:
+    - Pozisyon (x, y) — dot cinsinden
+    - Boyut (width, height) — dot cinsinden
+    - Seçilebilir, sürüklenebilir, boyutlandırılabilir
+    - 8 resize handle (4 köşe + 4 kenar ortası)
+    - Seçildiğinde mavi noktalı çerçeve
+    - Hover'da açık mavi vurgulama
+    - Sağ tık context menü
+    - Sürükleme sırasında snap-to-grid
+    - Sürükleme sırasında hizalama çizgileri (diğer elementlere göre)
+    """
+    
+    # Resize handle'lar:
+    # [TL]----[T]----[TR]
+    #  |               |
+    # [L]             [R]
+    #  |               |
+    # [BL]----[B]----[BR]
+    #
+    # Her handle 8x8 piksel mavi kare
+    # Köşe handle'lar: her iki yönde boyutlandırır
+    # Kenar handle'lar: sadece ilgili yönde boyutlandırır
+```
+
+**Metin Elementi (`text_element.py`):**
+- ZPL komutları: `^FO`, `^A`, `^FD`, `^FS`
+- Özellikler: font, font_size, rotation (0, 90, 180, 270), text_content
+- Çift tıklayınca inline editing modu: doğrudan canvas üzerinde metin düzenleme
+- Font mapping: ZPL font ID (0-9, A-Z) → yaklaşık QFont karşılığı
+- Font 0 (varsayılan) → monospace benzeri font
+- Resize: font boyutunu değiştirir (genişlik ve yükseklik)
+
+**Dikdörtgen/Çizgi Elementi (`line_element.py`, `box_element.py`):**
+- ZPL komutları: `^FO`, `^GB width,height,thickness,color,rounding`
+- Özellikler: width, height, border_thickness, color (B/W), corner_rounding
+- Eğer width veya height ≤ thickness ise: çizgi olarak render et
+- Eğer rounding > 0 ise: köşeleri yuvarlat
+- Resize: width ve height'ı değiştirir
+- Thickness bir özellik panelinden ayarlanır
+
+**Daire Elementi (`circle_element.py`):**
+- ZPL komutu: `^FO`, `^GC diameter,thickness,color`
+- Özellikler: diameter, border_thickness, color
+- Resize: diameter'ı değiştirir (aspect ratio kilitli)
+
+**Çapraz Çizgi (`diagonal_line.py`):**
+- ZPL komutu: `^FO`, `^GD width,height,thickness,color,orientation`
+- Özellikler: width, height, thickness, color, orientation (R/L)
+- R = sağ eğimli (\), L = sol eğimli (/)
+
+**Barkod Elementi (`barcode_element.py`):**
+- ZPL komutları: `^FO`, `^BY`, `^BC`/`^B3` vb., `^FD`, `^FS`
+- Özellikler: barcode_type, data, module_width, height, show_interpretation
+- Canvas üzerinde gerçek barkod render edilir (python-barcode ile)
+- Resize: yükseklik ve genişlik ayarlanabilir
+- Çift tıklayınca barkod verisini düzenleme dialog'u açılır
+
+**QR Kod Elementi (`qr_element.py`):**
+- ZPL komutu: `^FO`, `^BQ`, `^FD`, `^FS`
+- Özellikler: data, magnification, error_correction
+- Canvas üzerinde gerçek QR kod render edilir (qrcode kütüphanesi ile)
+- Resize: magnification'ı değiştirir
+
+---
+
+### 7. Selection ve Manipulation Sistemi
+
+**Seçim:**
+- Tek tıklama: element seçimi
+- `Ctrl + Tıklama`: çoklu seçime ekle/çıkar
+- Sürükleyerek seçim dikdörtgeni (rubber band selection)
+- `Ctrl+A`: tümünü seç
+- Boş alana tıklama: seçimi temizle
+
+**Sürükleme:**
+- Seçili elementleri mouse ile sürükle
+- Sürükleme sırasında:
+  - Snap-to-grid (etkinse)
+  - Akıllı hizalama çizgileri: diğer elementlerin kenarlarına ve merkezlerine snap
+  - Pozisyon bilgisi tooltip olarak gösterilir
+  - Etiket sınırları dışına çıkılırsa uyarı (kırmızı çerçeve)
+
+**Boyutlandırma (Resize):**
+- 8 resize handle ile boyutlandırma
+- `Shift` basılıyken: oranları koru (aspect ratio lock)
+- `Alt` basılıyken: merkezden boyutlandır
+- Minimum boyut: 5x5 dot
+- Resize sırasında boyut bilgisi tooltip olarak gösterilir
+
+**Sağ Tık Menüsü:**
+- Kes, Kopyala, Yapıştır
+- Klonla (Ctrl+D)
+- Sil (Delete)
+- Öne Getir / Arkaya Gönder (Z-order)
+- Hizala → (alt menü: sola, ortaya, sağa, üste, ortaya dikey, alta)
+- Özellikleri Düzenle → Özellik panelini aç
+
+---
+
+### 8. Özellik Paneli (`property_panel.py`)
+
+Canvas'ın altında veya sağında dock edilebilir bir panel. Seçili elementin tüm özelliklerini gösterir ve düzenlemeye izin verir.
+
+**Ortak Alanlar (Tüm Elementler):**
+- X Pozisyon (spinbox, dot cinsinden)
+- Y Pozisyon (spinbox, dot cinsinden)
+- Genişlik (spinbox)
+- Yükseklik (spinbox)
+- Döndürme (combobox: 0°, 90°, 180°, 270°)
+
+**Metin Elementine Özel:**
+- Metin içeriği (text input)
+- Font seçimi (combobox: Zebra fontları)
+- Font boyutu yükseklik (spinbox)
+- Font boyutu genişlik (spinbox)
+
+**Kutu/Çizgi Elementine Özel:**
+- Çizgi kalınlığı (spinbox)
+- Renk (combobox: Siyah/Beyaz)
+- Köşe yuvarlaklığı (spinbox)
+
+**Barkod Elementine Özel:**
+- Barkod tipi (combobox)
+- Barkod verisi (text input)
+- Modül genişliği (spinbox)
+- Yükseklik (spinbox)
+- Yorumlama satırı göster (checkbox)
+
+**QR Kod Elementine Özel:**
+- QR verisi (text area)
+- Büyütme faktörü (spinbox 1-10)
+- Hata düzeltme seviyesi (combobox: L, M, Q, H)
+
+---
+
+### 9. Undo/Redo Sistemi (`undo_redo.py`)
+
+`QUndoStack` ve `QUndoCommand` tabanlı tam undo/redo desteği.
+
+**Desteklenen Eylemler:**
+- Element taşıma (pozisyon değişikliği)
+- Element boyutlandırma
+- Element ekleme
+- Element silme
+- Element özellik değişikliği (font, renk, metin vb.)
+- Çoklu element seçiminde toplu işlemler (macro command)
+
+Her eylem, önceki ve sonraki durumu saklar. Undo/Redo toolbar'da buton ve menüde kısayol olarak erişilebilir.
+
+---
+
+### 10. Etiket Ayarları
+
+**Etiket Boyutu:**
+- Genişlik ve yükseklik (dot, mm veya inch cinsinden girilebilir)
+- Yaygın etiket boyutları preset olarak sunulur:
+  - 4" x 6" (kargo etiketi)
+  - 4" x 2" (ürün etiketi)
+  - 2" x 1" (küçük etiket)
+  - Özel boyut
+- DPI seçimi: 203, 300, 600 (koordinat dönüşümlerini etkiler)
+
+**DPI Dönüşüm Formülleri:**
+- 203 DPI: 1 mm = 8 dot, 1 inch = 203 dot
+- 300 DPI: 1 mm ≈ 11.81 dot, 1 inch = 300 dot
+- 600 DPI: 1 mm ≈ 23.62 dot, 1 inch = 600 dot
+
+---
+
+### 11. Tema ve Görsel Tasarım
+
+**Koyu Tema (Varsayılan):**
+- Arka plan: #1E1E1E (VS Code tarzı koyu gri)
+- Paneller: #252526
+- Kenar çizgileri: #3C3C3C
+- Metin: #D4D4D4
+- Vurgu rengi: #007ACC (mavi)
+- Seçim rengi: #264F78
+- Kod editörü arka plan: #1E1E1E
+- Canvas çalışma alanı: #2D2D2D
+- Etiket arka plan: #FFFFFF
+
+**Açık Tema:**
+- Standard açık renkler, etiket arka planı beyaz
+
+**QSS (Qt Stylesheet) ile tüm widget'lar tutarlı şekilde stillendirilmelidir.**
+
+---
+
+### 12. Labelary API Entegrasyonu (Opsiyonel ama Önerilir)
+
+Labelary.com'un API'si ile ZPL kodunun gerçek barkod yazıcı çıktısını preview olarak gösterme imkanı:
+
+```python
+import requests
+
+def get_labelary_preview(zpl_code: str, dpi: int = 203, 
+                          width: float = 4, height: float = 6) -> QPixmap:
+    """
+    Labelary API üzerinden ZPL kodunun gerçek render'ını al.
+    
+    Endpoint: http://api.labelary.com/v1/printers/{dpi}dpi/labels/{width}x{height}/0/
+    Method: POST
+    Body: ZPL kodu (plain text)
+    Response: PNG image
+    """
+    url = f"http://api.labelary.com/v1/printers/{dpi}dpi/labels/{width}x{height}/0/"
+    response = requests.post(url, data=zpl_code.encode('utf-8'),
+                              headers={'Accept': 'image/png'})
+    pixmap = QPixmap()
+    pixmap.loadFromData(response.content)
+    return pixmap
+```
+
+Bu preview, canvas'ın üstünde veya ayrı bir sekmede "Yazıcı Önizleme" olarak gösterilebilir. Böylece kullanıcı kendi render'ı ile gerçek çıktıyı karşılaştırabilir.
+
+---
+
+### 13. Export Özellikleri
+
+- **ZPL olarak kaydet:** Mevcut durumu `.zpl` veya `.txt` dosyasına kaydet
+- **PNG Export:** Canvas'ı belirtilen DPI'da PNG olarak export et
+- **PDF Export:** A4 veya etiket boyutunda PDF export
+- **Panoya Kopyala:** ZPL kodunu veya görsel preview'u panoya kopyala
+
+---
+
+### 14. Hata Yönetimi ve Kullanıcı Deneyimi
+
+**Parse Hataları:**
+- Parse edilemeyen komutlar kırmızı vurgulanır (editörde)
+- Canvas üzerinde bilinmeyen komutlar kırmızı soru işareti ikonu ile gösterilir
+- Hata detayı statusbar'da ve tooltip'te gösterilir
+- Geçersiz parametreler varsayılan değerle değiştirilir (best-effort parsing)
+
+**Kullanıcı Geri Bildirimi:**
+- Sürükleme sırasında gerçek zamanlı pozisyon gösterimi
+- Boyutlandırma sırasında gerçek zamanlı boyut gösterimi
+- Snap-to-grid aktifken snap noktaları vurgulanır
+- Hizalama çizgileri (alignment guides) diğer elementlere yaklaşırken görünür
+- Element etiket sınırları dışına çıkarsa kırmızı çerçeve
+
+---
+
+### 15. Performans Gereksinimleri
+
+- 100+ elementli bir etikette akıcı sürükleme ve boyutlandırma
+- Bidirectional sync'te 500ms debounce ile gereksiz update önleme
+- QGraphicsView'in BSP indexing'ini aktif kullan (varsayılan)
+- Büyük bitmap grafiklerde (^GFA) lazy loading
+- Zoom sırasında level-of-detail: çok küçükken basitleştirilmiş render
+
+---
+
+## Geliştirme Aşamaları (Önerilen Sıralama)
+
+### Faz 1 — Temel Altyapı (Önce Bunu Yap)
+1. Ana pencere, splitter, menüler, toolbar iskeletini kur
+2. ZPL kod editörünü oluştur (syntax highlighting dahil)
+3. Canvas view'u oluştur (zoom, pan, grid, ruler)
+4. Etiket modelini ve koordinat sistemini kur
+5. Temel ZPL parser'ı yaz (^XA, ^XZ, ^FO, ^FD, ^FS, ^A, ^CF)
+6. Temel ZPL generator'ı yaz
+
+### Faz 2 — Grafik Elementler
+7. BaseElement ile resize handle sistemi
+8. Metin elementi (^FO + ^A + ^FD)
+9. Dikdörtgen/çizgi elementi (^GB)
+10. Bidirectional sync (kod ↔ canvas)
+
+### Faz 3 — Gelişmiş Elementler
+11. Daire elementi (^GC)
+12. Çapraz çizgi (^GD)
+13. Barkod elementleri (^BC, ^B3)
+14. QR kod elementi (^BQ)
+15. Özellik paneli
+
+### Faz 4 — Kullanıcı Deneyimi
+16. Undo/redo sistemi
+17. Snap-to-grid ve hizalama çizgileri
+18. Sağ tık menüsü
+19. Inline metin düzenleme
+20. Copy/paste
+21. Tema sistemi (koyu/açık)
+
+### Faz 5 — İleri Özellikler
+22. Labelary API entegrasyonu
+23. PNG/PDF export
+24. Çok satırlı metin bloğu (^FB)
+25. Bitmap grafik desteği (^GFA)
+26. Performans optimizasyonu
+
+---
+
+## Örnek ZPL Kodu (Test İçin)
+
+```zpl
+^XA
+^PW812
+^LL1218
+
+^FX -- Üst çizgi --
+^FO50,50^GB712,0,3^FS
+
+^FX -- Başlık metni --
+^FO50,80^A0N,40,40^FDShipping Label^FS
+
+^FX -- Kutu --
+^FO50,140^GB712,200,2^FS
+
+^FX -- Adres bilgileri --
+^FO70,160^A0N,28,28^FDJohn Doe^FS
+^FO70,195^A0N,24,24^FD123 Main Street^FS
+^FO70,225^A0N,24,24^FDNew York, NY 10001^FS
+^FO70,260^A0N,24,24^FDUnited States^FS
+
+^FX -- Barkod --
+^FO150,380^BY3
+^BCN,120,Y,N,N
+^FD1234567890^FS
+
+^FX -- QR Kod --
+^FO550,140^BQN,2,5^FDQA,https://example.com^FS
+
+^FX -- Alt çizgi --
+^FO50,550^GB712,0,3^FS
+
+^FX -- Alt bilgi --
+^FO50,580^A0N,20,20^FDTracking: 1Z999AA10123456784^FS
+
+^XZ
+```
+
+---
+
+## Kritik Notlar ve Uyarılar
+
+1. **Bidirectional sync en zorlu kısımdır.** Sonsuz döngüyü önlemek için mutlaka bir flag mekanizması kullanılmalı. Editörden canvas'a veya canvas'tan editöre güncelleme yaparken karşı tarafın signal'lerini geçici olarak blokla.
+
+2. **ZPL koordinat sistemi sol üst köşeden başlar** (0,0), sağa ve aşağıya doğru artar. QGraphicsScene de aynı sistemi kullandığı için doğrudan eşleme yapılabilir.
+
+3. **ZPL'de font boyutları dot cinsindendir**, piksel değil. DPI'a göre dönüşüm yapılmalıdır.
+
+4. **^FO vs ^FT farkı:** ^FO elementin sol üst köşesini, ^FT ise metnin baseline'ını (sol alt) belirtir. Her ikisi de desteklenmelidir.
+
+5. **^GB komutu hem çizgi hem dikdörtgen üretir.** Width veya height, thickness'tan küçük veya eşitse çizgi olarak render edilmelidir.
+
+6. **ZPL'de boşluk ve satır sonu önemsizdir.** Parser whitespace-insensitive olmalıdır.
+
+7. **Bazı ZPL komutları global etkiye sahiptir** (^CF, ^BY, ^CI). Bunlar bir state olarak tutulmalı ve sonraki elementlere uygulanmalıdır.
+
+8. **QGraphicsView ile çalışırken coordinate mapping kritiktir:** `mapToScene()` ve `mapFromScene()` fonksiyonları doğru kullanılmalı. Mouse event'lerinde her zaman scene koordinatlarına dönüşüm yapılmalıdır.
+
+9. **Resize handle'lar sabit ekran boyutunda olmalıdır** (zoom'dan bağımsız). `ItemIgnoresTransformations` flag'i bu handle'lara uygulanmalıdır veya `paint()` metodunda zoom seviyesine göre boyut ayarlanmalıdır.
+
+10. **Performans için:** Element sayısı fazla olduğunda, her küçük değişiklikte tüm ZPL'yi yeniden üretmek yerine, sadece değişen elementin ZPL parçasını güncelleyen inkremental bir mekanizma düşünülmelidir.
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me carefully analyze the conversation chronologically to create a comprehensive summary.
+
+## Session Start
+The session began as a continuation from a previous conversation. The baseline scores were:
+- label_1: 93.3% [FAIL]
+- label_2: 92.5% [FAIL]
+- label_3: 94.9% [FAIL]
+- label_4: 96.0% [OK]
+
+Goal: Push all labels to ≥95% similarity.
+
+## Work Done in This Session
+
+### 1. PSM 11 Supplement Attempt (REVERTED)
+Added PSM 11 supplemental scan after PSM 6 in `_detect_text` with height ≤50px filter.
+Results: label_1 93.2%, label_2 92.5%, label_3 94.9%, label_4 95.7% - label_4 regressed.
+Reverted this change.
+
+### 2. Investigation of label_3
+Ran baseline: label_1=93.3%, label_2=92.5%, label_3=94.9%, label_4=96.0%.
+Label_3 worst bands: y=350 (88% missed), y=200 (85% missed), y=1050 (81% missed).
+
+Identified the CA region at y=942, height=170 in the ZPL:
+`^FO469,942^A0N,170,109^FDCA^FS`
+
+Debug analysis at y=1070-1095:
+- Output CA stops at ~y=1070 (128px from y=942, = 75% of 170)
+- Input CA extends to ~y=1095 (153px from y=942)
+- Root cause: ZPL ^A0N font renders ink at ~75% of cell height
+- At font_h=170: output cap height = 0.75×170 = 127px → ends y=1069
+- Original: font_h=170 but renders 90% ink height = 153px? No...
+- Correct model: Tesseract detects INK height = 153px, and the original font_h = 153/0.75 = 204
+
+### 3. CA Height Fix
+Modified `_ocr_image_regions` in image_analyzer.py to measure actual ink bottom extent for short text (≤3 chars):
+- Uses interior columns (skip border pixels) to find ink bottom
+- Calculates corrected height = ink_height / 0.75
+- Only expands height, never shrinks
+
+Result: label_3 jumped from 94.9% → **95.0%** (PASSES)
+- CA height corrected: 170 → 211
+- label_4 unaffected (96.0%)
+
+### 4. Label_1 and Label_2 Investigation
+Worst bands for label_1: y=200 (91% missed), y=300 (86% missed), y=250 (85% missed).
+
+Detailed analysis revealed the fundamental issue:
+- The OUTPUT text has ink that stops 7-14 rows early compared to input
+- Pattern: every ~30 rows there's a terrible ratio (y=270 ratio=0.01, y=300 ratio=0.01, y=330 ratio=0.02, y=360 ratio=0.00)
+- These correspond to the BOTTOM ROWS of each text line
+
+Root cause: Tesseract reports INK bounding box height (~75% of ZPL font cell height). When we use Tesseract's ink height as font_h directly, Labelary renders only 75%×75% = 56% of the original ink height. The text is systematically missing its bottom rows.
+
+The fix needed: multiply detected text heights by 4/3 (= 1/0.75) to recover the original font cell height.
+
+Example:
+- Original font_h=36 → Labelary renders ink 36×0.75=27px → Tesseract detects h=27
+- Current output: font_h=27 → Labelary renders 27×0.75=20px (WRONG, 7px short)
+- Fixed output: font_h=27×4/3=36 → Labelary renders 36×0.75=27px (CORRECT)
+
+The fix should go in `_detect_text_grouped` at lines 726-729 (where DetectedRegion is created), NOT in `_calculate_font_size` (which would also affect reverse banners where height = banner height, not text ink height).
+
+## What Was Being Worked On Last
+Was about to read `_clean_and_dedup_text` to verify the ×4/3 height scaling wouldn't cause issues with nearby text lines being considered overlapping/duplicate. Had just read `_detect_text_grouped` lines 695-729 to find where to apply the fix.
+
+Summary:
+1. Primary Request and Intent:
+   - Continue iterative pixel-perfect comparison loop to push all 4 labels to ≥95% similarity
+   - Texts must remain as ZPL `^FD` commands (not GFA bitmaps)
+   - Session baseline: label_1=93.3%, label_2=92.5%, label_3=94.9%, label_4=96.0% (label_4 already passes)
+   - User sent only: "devam" (Turkish for "continue") — confirming to continue the previous work
+
+2. Key Technical Concepts:
+   - **ZPL `^A0N,H,W` font rendering**: Labelary renders character ink at approximately 75% of the specified cell height H. The bottom ~25% of the cell is whitespace (line spacing). So ink height = 0.75 × H.
+   - **Tesseract ink detection**: Tesseract reports the bounding box of VISIBLE INK, not the font cell. So detected_h ≈ 0.75 × original_font_h.
+   - **Double-reduction bug**: Using detected ink height directly as font_h → Labelary renders 0.75 × ink_h = 0.75 × 0.75 × original = 56% of original ink height. Text bottom rows are systematically missing.
+   - **Height correction formula**: `corrected_font_h = detected_ink_h / 0.75 = detected_ink_h × 4/3`
+   - **CA OCR from image region**: When a graphic box with text (like "CA") is OCR'd, the region uses the BOX bounding box, not the actual character ink extent. This causes font_h to be the box height rather than the proper font cell height.
+   - **Ink-extent measurement**: For short OCR'd image text (≤3 chars), measure actual dark-pixel bottom in the binary crop using interior columns (to exclude box border pixels), then scale by 1/0.75.
+   - **PSM 6 vs PSM 11**: PSM 6 (uniform block) misses isolated text. PSM 11 (sparse) finds them but also returns large garbage merged regions. Height ≤50px filter doesn't prevent all issues and hurts label_4.
+   - **Pixel comparison metrics**: `similarity = match / total_pixels × 100`; `band_missed_pct` = foreground pixels in band that are in input but not output; `worst_bands` = bands where band_missed_pct > 50%.
+
+3. Files and Code Sections:
+   - **`zpl_editor/image_processing/image_analyzer.py`**
+     - `_detect_text` (lines 617-643): Reverted PSM 11 supplement (it hurt label_4 from 96.0% to 95.7%).
+     - `_ocr_image_regions` (lines 1562-1623): **MODIFIED** — added ink-extent measurement for short OCR'd text (≤3 chars) to correctly set font height. Key new code:
+       ```python
+       # Track scale used for crop upscaling
+       scale_used = 1.0
+       ch, cw = crop.shape[:2]
+       if max(ch, cw) < 200:
+           scale_used = 300.0 / max(ch, cw)
+           crop = cv2.resize(crop, None, fx=scale_used, fy=scale_used,
+                             interpolation=cv2.INTER_CUBIC)
+       
+       # ... (OCR code unchanged) ...
+       
+       if is_valid:
+           # For short text (routing codes like "CA"), measure actual ink extent
+           # to correct the font height. ZPL ^A0 font renders ink at ~75% of cell height.
+           final_height = region.height
+           if len(alnum) <= 3:
+               try:
+                   bh, bw = binary.shape[:2]
+                   margin = max(5, min(15, bw // 8))
+                   interior = binary[:, margin:bw - margin]
+                   if interior.size > 0:
+                       dark_rows = np.where(np.any(interior == 0, axis=1))[0]
+                       if len(dark_rows) > 0:
+                           ink_bottom_crop = int(dark_rows.max())
+                           ink_bottom_img = y1 + round(ink_bottom_crop / scale_used)
+                           ink_height = max(1, ink_bottom_img - region.y + 1)
+                           corrected_h = round(ink_height / 0.75)
+                           if corrected_h > region.height:
+                               final_height = corrected_h
+                               print(f"[ImageAnalyzer] '{best_text}' height corrected: "
+                                     f"{region.height} -> {final_height}")
+               except Exception:
+                   pass
+           text_regions.append(DetectedRegion(
+               "text", x=region.x, y=region.y,
+               width=region.width, height=final_height,
+               data=best_text, confidence=0.7
+           ))
+       ```
+     - `_detect_text_grouped` (lines 695-732): WHERE THE NEXT FIX NEEDS TO GO — creates DetectedRegion objects from Tesseract word groups. The height at lines 718-720 is the raw Tesseract ink height that needs ×4/3 scaling:
+       ```python
+       bottom = max(b['y'] + b['h'] for b in col)
+       h = bottom - y
+       # ...
+       text_regions.append(DetectedRegion(
+           "text", x=x, y=y, width=w, height=h,
+           data=text, confidence=0.8
+       ))
+       ```
+   - **`zpl_editor/image_processing/zpl_from_image.py`**
+     - `_calculate_font_size` (lines 189-196): Currently returns height as-is (just enforces minimum 15). NOT where to apply the fix — applying ×4/3 here would also affect reverse banners (where region height = banner height, not text ink height).
+       ```python
+       @staticmethod
+       def _calculate_font_size(height: int, text: str = '') -> int:
+           if height < 15:
+               return 15
+           return height
+       ```
+     - Text rendering (lines 117-136): `font_h = self._calculate_font_size(zpl_h, region.data)`. For reverse banners uses `zpl_h` = banner height — this path should NOT get the ×4/3 correction.
+
+4. Errors and fixes:
+   - **PSM 11 supplement added garbage regions and hurt label_4**:
+     - Added height ≤50px filter but it still added 5 unwanted regions to label_4 (96.0%→95.7%)
+     - Fixed: reverted PSM 11 supplement entirely from `_detect_text`
+   - **CA OCR region height mismatch** (root cause of label_3 y=1000-1099 bands being 79-81% missed):
+     - Input CA ink extends to y≈1095 (153px from y=942), output CA only to y≈1070 (128px)
+     - The box bounding box height (170px) was used as font_h; but Labelary renders cap height = 75%×170 = 127px
+     - Fixed: in `_ocr_image_regions`, measure actual ink bottom in binary crop using interior columns; corrected_h = ink_height/0.75 = 153/0.75 = 204 → actual result was 211
+     - Result: label_3 from 94.9% → **95.0%** ✓
+   - **Systematic text height underestimation** (root cause of label_1 y=200/250/300 bands, label_2 y=150/200):
+     - Every ~30 rows there's a terrible match ratio (0.01-0.02) at the bottom of text lines
+     - Example: `^FO30,279^A0N,28,17^FDOrganize Sanayi^FS` — at y=300 (row 21 of 28), output shows only 4 pixels but input shows 368
+     - Root cause: Tesseract detects ink height = 0.75 × original_font_h; we use ink_h as font_h; Labelary renders ink at 0.75 × ink_h = 0.56 × original_h
+     - Fix needed: multiply detected height by 4/3 in `_detect_text_grouped` when creating text regions
+
+5. Problem Solving:
+   - **SOLVED**: label_3 from 94.9% → 95.0% via CA height correction (170→211) in `_ocr_image_regions`
+   - **SOLVED**: label_4 regression from PSM 11 — reverted PSM 11 supplement
+   - **IDENTIFIED but NOT YET FIXED**: Systematic text height underestimation affecting label_1 (93.3%) and label_2 (92.5%). The fix is to multiply Tesseract-detected text heights by 4/3 in `_detect_text_grouped`.
+   - **Current scores**: label_1=93.3% [FAIL], label_2=92.5% [FAIL], label_3=95.0% [OK], label_4=96.0% [OK]
+
+6. All user messages:
+   - (Session start as continuation) — user only sent one message: "devam" (Turkish for "continue")
+
+7. Pending Tasks:
+   - Fix label_1 (93.3% → ≥95%): Apply ×4/3 height correction to all Tesseract-detected text regions in `_detect_text_grouped`
+   - Fix label_2 (92.5% → ≥95%): Same fix likely helps; also has QR code issues at y=350-450 and reverse banner at y=800
+   - Verify fix doesn't regress label_3 (95.0%) or label_4 (96.0%)
+
+8. Current Work:
+   The work immediately before this summary was analyzing the systematic text height underestimation bug in label_1. Key findings:
+   - Address area (y=240-380) analysis shows ratio drops to 0.01-0.02 at the bottom of each text line every ~30 rows
+   - At y=270: IN=221, OUT=3 (ratio=0.01) — bottom of "Akdeniz Depo Merkezi Mueller GmbH" at y=249, h=28
+   - At y=300: IN=368, OUT=4 (ratio=0.01) — bottom of "Organize Sanayi" at y=279, h=28
+   - At y=330: IN=274, OUT=6 (ratio=0.02) — bottom of "Mersin, 33100 Turkiye..." at y=309, h=28
+   
+   Was reading `_clean_and_dedup_text` (located at line 1198 in image_analyzer.py) to verify that applying ×4/3 height scaling to text regions in `_detect_text_grouped` wouldn't cause adjacent text lines to be falsely deduplicated due to bounding box overlap.
+
+   The proposed fix is to modify `_detect_text_grouped` at lines 718-729:
+   ```python
+   # Current code:
+   bottom = max(b['y'] + b['h'] for b in col)
+   h = bottom - y
+   text_regions.append(DetectedRegion(
+       "text", x=x, y=y, width=w, height=h,
+       data=text, confidence=0.8
+   ))
+   
+   # Proposed fix: scale h by 4/3 to recover original font cell height
+   # (Tesseract reports ink height = ~75% of ZPL font cell height)
+   bottom = max(b['y'] + b['h'] for b in col)
+   h = bottom - y
+   corrected_h = round(h * 4 / 3)  # Recover font cell height from ink height
+   text_regions.append(DetectedRegion(
+       "text", x=x, y=y, width=w, height=corrected_h,
+       data=text, confidence=0.8
+   ))
+   ```
+
+9. Optional Next Step:
+   Read `_clean_and_dedup_text` to verify the ×4/3 height fix won't cause false deduplication, then apply the fix in `_detect_text_grouped` lines 718-729. The fix should:
+   - Scale height by 4/3 only for Tesseract-detected text (not reverse banners, not image OCR'd regions)
+   - Apply at the point where DetectedRegion is created in `_detect_text_grouped`
+   - Test with `test_pixel_loop.py` to verify label_1 and label_2 improve while label_3 (95.0%) and label_4 (96.0%) don't regress
+   
+   Direct quote from analysis: "The pattern: EVERY ~30 rows there's a TERRIBLE ratio (y=270, y=300, y=330, y=360). These are at 30-row intervals... The bottom portions of each text line have almost NO ink in the output, while the input has significant ink at those bottom rows. This is the FONT HEIGHT ISSUE!"
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\Furkan\.claude\projects\c--Users-Furkan-Desktop-ZPLEditor\9602358f-2a34-4395-831c-3335195c99fb.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
