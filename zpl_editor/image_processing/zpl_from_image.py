@@ -125,12 +125,40 @@ class ZPLFromImage:
 
             elif region.region_type == "text":
                 if region.data:
-                    font_h = self._calculate_font_size(zpl_h, region.data)
-                    n_chars = max(len(region.data), 1)
-                    char_w_from_region = zpl_w // n_chars
-                    # Width is capped at font_h (never wider than tall).
-                    # No minimum above 8: long strings in narrow boxes need condensed glyphs.
-                    font_w = max(8, min(font_h, char_w_from_region))
+                    text = self._sanitize_text(region.data)
+                    if not text:
+                        continue
+
+                    fit = self._fit_text_to_region(zpl_w, zpl_h, text)
+                    font_h = fit["font_h"]
+                    font_w = fit["font_w"]
+                    text_x = zpl_x + fit["offset_x"]
+                    text_y = zpl_y + fit["offset_y"]
+
+                    # If text is extremely condensed (many chars in a tiny area),
+                    # bitmap rendering is usually closer to the source image than ^A0.
+                    if fit["prefer_bitmap"]:
+                        gfa_bytes = ((zpl_w + 7) // 8) * zpl_h
+                        if gfa_bytes <= 20000:
+                            lines.append(f"^FX Text region (bitmap - tight fit)")
+                            lines.extend(self._gen_graphic_region(
+                                gray, region, zpl_x, zpl_y, zpl_w, zpl_h, label_width))
+                            lines.append("")
+                            continue
+
+                    # If this text was OCR'd from an image region and is very short,
+                    # render as bitmap in large boxes to avoid logo->text false conversions.
+                    if (region.extra.get("from_image_ocr")
+                            and len(text) <= 3
+                            and (zpl_w * zpl_h) > 7000):
+                        gfa_bytes = ((zpl_w + 7) // 8) * zpl_h
+                        if gfa_bytes <= 20000:
+                            lines.append(f"^FX Text region (bitmap - image OCR safety)")
+                            lines.extend(self._gen_graphic_region(
+                                gray, region, zpl_x, zpl_y, zpl_w, zpl_h, label_width))
+                            lines.append("")
+                            continue
+
                     if region.extra.get("reverse"):
                         # Reverse-video: use GFA bitmap to exactly reproduce the black
                         # background + white text pixels (including emojis/special chars).
@@ -143,15 +171,13 @@ class ZPLFromImage:
                             # Fallback: filled box + white text for very large banners
                             lines.append(f"^FX Reverse banner text")
                             lines.append(f"^FO{zpl_x},{zpl_y}^GB{zpl_w},{zpl_h},{zpl_h},B^FS")
-                            pad_x = max(4, (zpl_w - font_w * n_chars) // 2)
-                            pad_y = max(2, (zpl_h - font_h) // 2)
-                            lines.append(f"^FO{zpl_x + pad_x},{zpl_y + pad_y}")
+                            lines.append(f"^FO{text_x},{text_y}")
                             lines.append(f"^A0N,{font_h},{font_w}")
-                            lines.append(f"^FR^FD{region.data}^FS")
+                            lines.append(f"^FR^FD{text}^FS")
                     else:
-                        lines.append(f"^FO{zpl_x},{zpl_y}")
+                        lines.append(f"^FO{text_x},{text_y}")
                         lines.append(f"^A0N,{font_h},{font_w}")
-                        lines.append(f"^FD{region.data}^FS")
+                        lines.append(f"^FD{text}^FS")
                 else:
                     gfa_bytes = ((zpl_w + 7) // 8) * zpl_h
                     if gfa_bytes > 20000:
@@ -200,7 +226,8 @@ class ZPLFromImage:
             label_width = round(4 * dpi)
             label_height = round(6 * dpi)
         resized = cv2.resize(gray, (label_width, label_height), interpolation=cv2.INTER_AREA)
-        _, binary = cv2.threshold(resized, 128, 1, cv2.THRESH_BINARY_INV)
+        _, binary255 = cv2.threshold(resized, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        binary = (binary255 > 0).astype(np.uint8)
         gfa = self._bitmap_to_gfa(binary, 0, 0)
 
         return "\n".join([
@@ -223,6 +250,72 @@ class ZPLFromImage:
             return 15
         # Use actual region height - ZPL font 0 renders at specified height
         return height
+
+    @staticmethod
+    def _sanitize_text(text: str) -> str:
+        """Sanitize text for ^FD usage by removing unsupported control chars."""
+        if text is None:
+            return ""
+        # ^ and ~ are command introducers in ZPL; remove to avoid command breaks.
+        cleaned = text.replace('^', '').replace('~', '')
+        cleaned = ''.join(ch for ch in cleaned if ch == '\t' or ch == ' ' or 32 <= ord(ch) < 127)
+        return cleaned.strip()
+
+    @staticmethod
+    def _text_width_factor(text: str) -> float:
+        """Estimate average glyph width / height ratio for ZPL font 0."""
+        if not text:
+            return 0.56
+        digits = sum(ch.isdigit() for ch in text)
+        upper = sum(ch.isalpha() and ch.isupper() for ch in text)
+        lower = sum(ch.isalpha() and ch.islower() for ch in text)
+        spaces = sum(ch.isspace() for ch in text)
+        n = max(len(text), 1)
+
+        ratio = 0.56
+        ratio -= (digits / n) * 0.03
+        ratio += (upper / n) * 0.03
+        ratio -= (lower / n) * 0.01
+        ratio -= (spaces / n) * 0.02
+        return max(0.46, min(0.66, ratio))
+
+    def _fit_text_to_region(self, box_w: int, box_h: int, text: str) -> dict:
+        """Fit text to a target region and return ZPL font params + offsets."""
+        n_chars = max(len(text), 1)
+        pad_x = max(1, min(8, box_w // 20))
+        pad_y = max(1, min(6, box_h // 15))
+
+        avail_w = max(8, box_w - 2 * pad_x)
+        avail_h = max(10, box_h - 2 * pad_y)
+
+        width_factor = self._text_width_factor(text)
+        max_h_from_width = int(avail_w / max(width_factor * n_chars, 0.01))
+
+        font_h = max(10, min(avail_h, max_h_from_width))
+        font_w = max(5, int(round(font_h * width_factor)))
+
+        # Safety loop: ensure text fits width
+        while n_chars * font_w > avail_w and font_w > 4:
+            font_w -= 1
+
+        # If very narrow, reduce height proportionally to avoid heavy strokes
+        if font_w < max(6, int(font_h * 0.35)):
+            font_h = max(9, int(round(font_w / max(width_factor, 0.2))))
+
+        text_w_est = n_chars * font_w
+        offset_x = pad_x + max(0, (avail_w - text_w_est) // 2)
+        offset_y = pad_y + max(0, (avail_h - font_h) // 2)
+
+        compact_ratio = avail_w / max(n_chars, 1)
+        prefer_bitmap = (font_h < 12 and n_chars >= 12) or compact_ratio < 5.0
+
+        return {
+            "font_h": font_h,
+            "font_w": font_w,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "prefer_bitmap": prefer_bitmap,
+        }
 
     def _measure_region_ink_height(self, gray: np.ndarray, region) -> int:
         """Measure actual ink height of a text region from binary image.
@@ -468,7 +561,8 @@ class ZPLFromImage:
         target_w = max(1, zpl_w)
         target_h = max(1, zpl_h)
         resized = cv2.resize(roi, (target_w, target_h), interpolation=cv2.INTER_AREA)
-        _, binary = cv2.threshold(resized, 128, 1, cv2.THRESH_BINARY_INV)
+        _, binary255 = cv2.threshold(resized, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        binary = (binary255 > 0).astype(np.uint8)
         return [self._bitmap_to_gfa(binary, zpl_x, zpl_y)]
 
     def _bitmap_to_gfa(self, binary: np.ndarray, x: int, y: int) -> str:

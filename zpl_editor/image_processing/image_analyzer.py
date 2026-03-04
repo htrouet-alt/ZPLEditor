@@ -1891,6 +1891,21 @@ class ImageAnalyzer:
                     is_valid = alnum.isupper() or alnum.isdigit()
                 else:
                     is_valid = True
+
+            # Guard: large graphic regions can be misread as short text (e.g. logo -> "CA").
+            # In these cases keep the region as bitmap image for pixel-accurate rendering.
+            if is_valid and len(alnum) <= 3:
+                region_area = region.width * region.height
+                region_aspect = region.width / max(region.height, 1)
+                dark_ratio = float(np.mean(binary == 0)) if binary.size else 0.0
+
+                # Large/tall regions with very short OCR text are likely logos, not text.
+                # Also reject dense short-text crops; real text occupies less ink ratio.
+                if ((region_area > 7000 and region.height > 80 and region_aspect < 1.2)
+                        or (region_area > 10000 and len(alnum) <= 3)
+                        or dark_ratio > 0.40):
+                    is_valid = False
+
             if is_valid:
                 # For short text (routing codes like "CA"), measure actual ink extent
                 # to correct the font height. The box boundary is the detected region,
@@ -1921,7 +1936,8 @@ class ImageAnalyzer:
                 text_regions.append(DetectedRegion(
                     "text", x=region.x, y=region.y,
                     width=region.width, height=final_height,
-                    data=best_text, confidence=0.7
+                    data=best_text, confidence=0.7,
+                    extra={"from_image_ocr": True}
                 ))
             else:
                 remaining.append(region)
