@@ -255,6 +255,27 @@ class ZPLParser:
                 # Known commands that don't affect rendering - silently skip
                 pass
 
+            elif cmd_code == "GFA":
+                if current_element is None:
+                    continue
+                # ^GFA,total_bytes,total_bytes,bytes_per_row,hex_data
+                # param_str starts with ',' after GFA command code
+                parts = param_str.lstrip(',').split(',', 3)
+                if len(parts) >= 4:
+                    total_bytes = self._safe_int(parts[0], 0)
+                    bytes_per_row = self._safe_int(parts[2], 0)
+                    hex_data = parts[3].replace('\n', '').replace('\r', '').replace(' ', '')
+                    if bytes_per_row > 0:
+                        width_pixels = bytes_per_row * 8
+                        height_pixels = total_bytes // bytes_per_row
+                        current_element.element_type = "image"
+                        current_element.properties["width"] = width_pixels
+                        current_element.properties["height"] = height_pixels
+                        current_element.properties["bytes_per_row"] = bytes_per_row
+                        current_element.properties["total_bytes"] = total_bytes
+                        current_element.properties["format"] = "A"
+                        current_element.properties["data"] = hex_data
+
             elif cmd_code == "FO":
                 if current_element and current_element.element_type:
                     model.add_element(current_element)
