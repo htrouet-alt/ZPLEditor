@@ -228,6 +228,4 @@ zpl_editor/
 - **Text rendering** uses vertical scaling (capHeight-based) to match ZPL font 0 behavior where ink fills ~75% of the specified font height
 - **Code 128 encoder** supports explicit subset forcing via `>:` (Code B) and `>7` (Code C) prefixes to match the original barcode encoding
 
-## License
 
-This project is provided as-is for educational and development purposes.
