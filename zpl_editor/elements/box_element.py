@@ -40,9 +40,13 @@ class BoxElement(BaseElement):
 
         if self._is_line():
             # Use fillRect for pixel-perfect line rendering (avoids QPen centering offsets).
-            # Use property values for actual ZPL size (dot_width/dot_height may be clamped by _min_size).
+            # ZPL rule: when width or height is 0, use thickness as the dimension.
             prop_w = self._properties.get("width", w)
             prop_h = self._properties.get("height", h)
+            if prop_w <= 0:
+                prop_w = thickness
+            if prop_h <= 0:
+                prop_h = thickness
             painter.fillRect(QRectF(0, 0, prop_w, prop_h), color)
         elif thickness >= min(w, h) / 2:
             # Filled box
