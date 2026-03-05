@@ -37,7 +37,7 @@ If you prefer to set up manually instead of using the launcher scripts:
 
 ```bash
 # Clone the repository
-git clone https://github.com/katifurkan/Zpl.git
+git clone https://github.com/furkan59/ZPLEditor.git
 cd Zpl
 
 # Create virtual environment
