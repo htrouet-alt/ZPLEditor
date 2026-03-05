@@ -465,6 +465,8 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "Delete", self._delete_selected, "Delete")
         self._add_action(edit_menu, "Clone", self._clone_selected, "Ctrl+D")
         self._add_action(edit_menu, "Select All", self._select_all, "Ctrl+A")
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Settings...", self._show_settings)
 
         view_menu = menubar.addMenu("View")
         self._add_action(view_menu, "Zoom In", self._canvas_view.zoom_in, "Ctrl+=")
@@ -920,6 +922,17 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"ZPL generation failed:\n{e}")
             import traceback
             traceback.print_exc()
+
+    def _show_settings(self):
+        """Open the settings dialog."""
+        from .settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self)
+        if dlg.exec():
+            # Sync updated tesseract path to the Image Analysis view
+            from ..utils.settings import AppSettings
+            new_path = AppSettings().tesseract_path
+            self._image_analysis_view._tess_path_edit.setText(new_path)
+            self._image_analysis_view._on_tesseract_path_changed()
 
     def _batch_process_images(self):
         """Batch process: select images, analyze, generate ZPL, save to folder."""

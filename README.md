@@ -32,11 +32,15 @@ Import a label image (PNG) and automatically convert it to structured ZPL code:
 
 - **Barcode Detection** -- pyzbar + heuristic scanline analysis for Code 128 / Code 39 / EAN-13
 - **QR Code Detection** -- pyzbar + OpenCV QR detector
-- **Text Recognition** -- RapidOCR + EasyOCR (pure Python, primary) + Tesseract OCR (optional fallback)
+- **Text Recognition** -- RapidOCR + EasyOCR (pure Python, primary) + Tesseract OCR (fallback)
 - **Line & Box Detection** -- contour analysis with thickness measurement
 - **Reverse Text Detection** -- detects white-on-black banners and per-region text color
 - **Smart Barcode Rendering** -- uses structured `^BC` when module width matches integer grid, falls back to `^GFA` bitmap when fractional module width causes progressive bar misalignment
 - **QR Bitmap Preservation** -- encodes QR codes as `^GFA` to preserve exact module patterns from the original image
+
+- **Batch Processing** -- select multiple images, analyze all at once, and save individual `.zpl` files to a chosen output folder
+- **OCR Engine Selector** -- choose between Auto, RapidOCR, EasyOCR, or Tesseract from the UI
+- **Configurable Tesseract Path** -- set the Tesseract executable path from the UI; persisted across sessions
 
 **Pixel Accuracy:** Achieves **>=96%** pixel similarity across test labels using structured ZPL elements (text remains as `^FD`/`^A0N`, not converted to bitmaps).
 
@@ -57,6 +61,9 @@ Import a label image (PNG) and automatically convert it to structured ZPL code:
 ## Project Structure
 
 ```
+run.bat                              # Windows launcher (double-click to run)
+run.sh                               # Linux/macOS launcher (./run.sh)
+zpl_editor.spec                      # PyInstaller build spec
 zpl_editor/
 ├── main.py, app.py                  # Entry points
 ├── core/
@@ -85,7 +92,8 @@ zpl_editor/
 │   ├── property_panel.py            # Selected element properties
 │   ├── toolbar.py                   # Top toolbar
 │   ├── statusbar.py                 # Bottom status bar
-│   └── image_analysis_view.py       # OCR region detection preview
+│   ├── settings_dialog.py           # Edit > Settings dialog (Tesseract path)
+│   └── image_analysis_view.py       # OCR region detection preview + batch
 ├── image_processing/
 │   ├── image_analyzer.py            # Image analysis -- barcode/QR/text/line detection
 │   └── zpl_from_image.py            # Detected regions -> ZPL code
@@ -101,14 +109,40 @@ zpl_editor/
     ├── undo_redo.py                 # QUndoStack-based undo/redo
     ├── clipboard.py                 # Copy/paste
     ├── export.py                    # PNG export
-    └── settings.py                  # App settings
+    └── settings.py                  # App settings (Tesseract path, etc.)
 ```
+
+## Quick Start
+
+The easiest way to run the application -- no manual setup required:
+
+**Windows:** Double-click `run.bat`
+
+**Linux / macOS:**
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+The launcher scripts automatically create a virtual environment, install all dependencies, and start the application on first run. Subsequent launches skip the setup and start instantly.
+
+## Standalone EXE (Windows)
+
+A pre-built Windows executable is available in the `dist/ZPL_Editor/` folder. No Python installation required -- just run `ZPL_Editor.exe`.
+
+To build the EXE yourself:
+```bash
+pip install pyinstaller
+pyinstaller zpl_editor.spec --noconfirm
+```
+The output will be in `dist/ZPL_Editor/`.
+
+> **Note:** The EXE bundle is ~700 MB due to EasyOCR's PyTorch dependency.
 
 ## Requirements
 
 - Python 3.10+
-- **Optional:** [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) installed at `C:\Program Files\Tesseract-OCR\` 
-
+- [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) -- required for text recognition. Default install path: `C:\Program Files\Tesseract-OCR\`. If installed elsewhere, you can change the path from the app via `Edit > Settings` or the Image Analysis tab.
 
 ### Python Dependencies
 
@@ -116,7 +150,7 @@ zpl_editor/
 PyQt6
 numpy
 opencv-python
-pytesseract          # optional: only used if Tesseract exe is installed
+pytesseract          # Tesseract OCR Python wrapper
 rapidocr_onnxruntime # primary OCR engine (pure pip, ~15MB ONNX models)
 easyocr              # secondary OCR engine (pure pip, PyTorch-based)
 pyzbar
@@ -125,7 +159,9 @@ python-barcode
 requests
 ```
 
-## Installation
+## Manual Installation
+
+If you prefer to set up manually instead of using the launcher scripts:
 
 ```bash
 # Clone the repository
@@ -138,14 +174,14 @@ python -m venv .venv
 # Activate (Windows)
 .venv\Scripts\activate
 
+# Activate (Linux / macOS)
+source .venv/bin/activate
+
 # Install dependencies
 pip install -r requirements.txt
 pip install opencv-python
-```
 
-## Usage
-
-```bash
+# Run
 python main.py
 ```
 
@@ -154,7 +190,8 @@ python main.py
 1. **Create from scratch** -- use the toolbar to add text, barcodes, QR codes, boxes, lines
 2. **Edit ZPL code** -- type ZPL in the left panel, see it rendered on the right
 3. **Import image** -- click "Import" to load a label PNG, then "Analyze Image" + "Generate ZPL from Image" to convert it to editable ZPL
-4. **Export** -- save the rendered label as PNG
+4. **Batch process** -- click "Batch Process..." to select multiple images, analyze all, and save `.zpl` files to a folder
+5. **Export** -- save the rendered label as PNG
 
 ### ZPL Commands Supported
 

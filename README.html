@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZPL Visual Editor - Kullanim Kilavuzu</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #d2a8ff;
+    --accent4: #f0883e;
+    --red: #f85149;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* HERO */
+  .hero {
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #1a1e2e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 60px 20px 50px;
+    text-align: center;
+  }
+  .hero h1 { font-size: 3em; font-weight: 700; margin-bottom: 12px; }
+  .hero h1 span { color: var(--accent); }
+  .hero p { font-size: 1.15em; color: var(--text2); max-width: 700px; margin: 0 auto 30px; }
+  .badge-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 6px 16px; font-size: 0.85em; color: var(--text2);
+  }
+  .badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot-green { background: var(--accent2); }
+  .dot-blue { background: var(--accent); }
+  .dot-purple { background: var(--accent3); }
+  .dot-orange { background: var(--accent4); }
+
+  /* CONTAINER */
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+  /* SECTION */
+  .section { padding: 60px 0; }
+  .section + .section { border-top: 1px solid var(--border); }
+  .section-title {
+    font-size: 1.8em; font-weight: 700; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .section-title .icon { font-size: 0.8em; }
+  .section-sub { color: var(--text2); font-size: 1.05em; margin-bottom: 36px; }
+
+  /* FEATURE GRID */
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+  .feature-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px; transition: border-color 0.2s;
+  }
+  .feature-card:hover { border-color: var(--accent); }
+  .feature-card h3 { font-size: 1.1em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .feature-card p { color: var(--text2); font-size: 0.9em; }
+  .fc-icon {
+    width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .fc-blue { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .fc-green { background: rgba(63,185,80,0.15); color: var(--accent2); }
+  .fc-purple { background: rgba(210,168,255,0.15); color: var(--accent3); }
+  .fc-orange { background: rgba(240,136,62,0.15); color: var(--accent4); }
+
+  /* UI MOCKUP */
+  .ui-mockup {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; margin: 30px 0;
+  }
+  .ui-titlebar {
+    background: #252526; padding: 8px 16px; display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid var(--border); font-size: 0.85em; color: var(--text2);
+  }
+  .ui-dots { display: flex; gap: 6px; margin-right: 12px; }
+  .ui-dots span { width: 12px; height: 12px; border-radius: 50%; }
+  .ui-dots .r { background: #f85149; } .ui-dots .y { background: #d29922; } .ui-dots .g { background: #3fb950; }
+  .ui-body { display: flex; min-height: 420px; }
+  .ui-panel {
+    border-right: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column;
+  }
+  .ui-panel:last-child { border-right: none; }
+  .ui-panel-title {
+    font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text2); margin-bottom: 8px; font-weight: 600;
+  }
+  .ui-panel-label-list { width: 160px; flex-shrink: 0; }
+  .ui-panel-code { width: 35%; background: #1e1e1e; }
+  .ui-panel-canvas { flex: 1; background: #252526; display: flex; align-items: center; justify-content: center; }
+  .ui-label-item {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; margin-bottom: 6px; font-size: 0.75em; cursor: pointer;
+  }
+  .ui-label-item.active { border-color: var(--accent); background: rgba(88,166,255,0.1); }
+  .code-line { font-family: 'Consolas', 'Courier New', monospace; font-size: 0.72em; color: #d4d4d4; line-height: 1.8; }
+  .code-line .kw { color: #569cd6; }
+  .code-line .str { color: #ce9178; }
+  .code-line .cm { color: #6a9955; }
+  .canvas-label {
+    background: white; color: #000; width: 180px; padding: 10px; font-family: 'Consolas', monospace;
+    font-size: 0.65em; border: 1px solid #666; line-height: 1.6;
+  }
+  .canvas-label .cl-title { font-size: 1.4em; font-weight: bold; border-bottom: 2px solid #000; padding-bottom: 4px; margin-bottom: 4px; }
+  .canvas-label .cl-big { font-size: 1.6em; font-weight: bold; margin: 4px 0; }
+  .canvas-label .cl-bar { background: repeating-linear-gradient(90deg, #000 0px, #000 2px, #fff 2px, #fff 4px); height: 36px; margin: 6px 0; }
+  .canvas-label .cl-qr { width: 40px; height: 40px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Crect fill='%23000' x='0' y='0' width='3' height='3'/%3E%3Crect fill='%23000' x='7' y='0' width='3' height='3'/%3E%3Crect fill='%23000' x='0' y='7' width='3' height='3'/%3E%3Crect fill='%23000' x='4' y='4' width='2' height='2'/%3E%3Crect fill='%23000' x='1' y='1' width='1' height='1' fill='%23fff'/%3E%3C/svg%3E") center/contain no-repeat; float: right; margin-left: 6px; }
+
+  /* TABS for Image Analysis mockup */
+  .ui-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); }
+  .ui-tab {
+    padding: 8px 16px; font-size: 0.75em; color: var(--text2); cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .ui-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .ui-analysis-bar { display: flex; gap: 8px; padding: 10px; flex-wrap: wrap; align-items: center; }
+  .ui-btn {
+    padding: 5px 12px; border-radius: 4px; font-size: 0.7em; font-weight: 600; border: none; cursor: pointer;
+  }
+  .ui-btn-primary { background: #007ACC; color: #fff; }
+  .ui-btn-green { background: #5F7C3A; color: #fff; }
+  .ui-btn-default { background: #333; color: #d4d4d4; border: 1px solid #555; }
+  .ui-select {
+    background: #333; color: #d4d4d4; border: 1px solid #555; border-radius: 4px;
+    padding: 4px 8px; font-size: 0.7em;
+  }
+  .ui-input {
+    background: #333; color: #d4d4d4; border: 1px solid #555; border-radius: 4px;
+    padding: 4px 8px; font-size: 0.7em; flex: 1; min-width: 200px;
+  }
+  .ui-legend { display: flex; gap: 12px; padding: 4px 10px; font-size: 0.65em; }
+  .ui-legend span { display: flex; align-items: center; gap: 4px; }
+  .ui-legend .ldot { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* GALLERY */
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+  .gallery-item {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; transition: transform 0.2s, border-color 0.2s;
+  }
+  .gallery-item:hover { transform: translateY(-4px); border-color: var(--accent); }
+  .gallery-item img { width: 100%; height: auto; display: block; }
+  .gallery-item .caption {
+    padding: 10px 12px; font-size: 0.8em; display: flex; justify-content: space-between; align-items: center;
+  }
+  .gallery-item .caption .name { font-weight: 600; }
+  .gallery-item .caption .score {
+    background: rgba(63,185,80,0.15); color: var(--accent2); padding: 2px 8px;
+    border-radius: 10px; font-size: 0.85em; font-weight: 600;
+  }
+
+  /* COMPARISON */
+  .comparison {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;
+  }
+  .comp-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+  }
+  .comp-card img { width: 100%; height: auto; display: block; }
+  .comp-label {
+    padding: 10px 14px; font-size: 0.8em; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .comp-label.original { color: var(--accent); }
+  .comp-label.rendered { color: var(--accent2); }
+
+  /* STEPS */
+  .steps { display: flex; flex-direction: column; gap: 24px; }
+  .step {
+    display: flex; gap: 20px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; align-items: flex-start;
+  }
+  .step-num {
+    width: 44px; height: 44px; border-radius: 50%; background: rgba(88,166,255,0.15);
+    color: var(--accent); display: flex; align-items: center; justify-content: center;
+    font-size: 1.2em; font-weight: 700; flex-shrink: 0;
+  }
+  .step-content h3 { font-size: 1.05em; margin-bottom: 6px; }
+  .step-content p { color: var(--text2); font-size: 0.9em; }
+  .step-content code {
+    background: rgba(88,166,255,0.1); color: var(--accent); padding: 2px 6px;
+    border-radius: 4px; font-size: 0.85em;
+  }
+
+  /* CODE BLOCK */
+  .code-block {
+    background: #1e1e1e; border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; font-family: 'Consolas', monospace; font-size: 0.85em;
+    color: #d4d4d4; overflow-x: auto; margin: 16px 0;
+  }
+  .code-block .prompt { color: var(--accent2); }
+  .code-block .comment { color: #6a9955; }
+
+  /* TABLE */
+  .info-table {
+    width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9em;
+  }
+  .info-table th, .info-table td {
+    padding: 10px 14px; border: 1px solid var(--border); text-align: left;
+  }
+  .info-table th { background: var(--surface2); color: var(--accent); font-weight: 600; }
+  .info-table td { background: var(--surface); }
+  .info-table code { background: rgba(88,166,255,0.1); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+
+  /* KEYBOARD */
+  kbd {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 2px 7px; font-size: 0.85em; font-family: 'Consolas', monospace;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+
+  /* ALERT */
+  .alert {
+    border-radius: 8px; padding: 16px 20px; margin: 16px 0; font-size: 0.9em;
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .alert-info { background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); }
+  .alert-warn { background: rgba(210,168,255,0.1); border: 1px solid rgba(210,168,255,0.3); }
+  .alert-icon { font-size: 1.2em; flex-shrink: 0; }
+
+  /* FOOTER */
+  .footer {
+    border-top: 1px solid var(--border); padding: 30px 20px; text-align: center;
+    color: var(--text2); font-size: 0.85em;
+  }
+
+  /* RESPONSIVE */
+  @media (max-width: 768px) {
+    .hero h1 { font-size: 2em; }
+    .ui-body { flex-direction: column; }
+    .ui-panel-label-list { width: 100%; }
+    .ui-panel-code { width: 100%; }
+    .comparison { grid-template-columns: 1fr; }
+    .diff-gallery { grid-template-columns: 1fr; }
+    .step { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<section class="hero">
+  <h1><span>ZPL</span> Visual Editor</h1>
+  <p>
+    Python ve PyQt6 ile gelistirilmis, ZPL (Zebra Programming Language) kodunu gorsel olarak
+    duzenleyebilen tam ozellikli 2D etiket tasarim editoru.
+  </p>
+  <div class="badge-row">
+    <div class="badge"><span class="dot dot-green"></span> Python 3.10+</div>
+    <div class="badge"><span class="dot dot-blue"></span> PyQt6</div>
+    <div class="badge"><span class="dot dot-purple"></span> OpenCV + OCR</div>
+    <div class="badge"><span class="dot dot-orange"></span> %96+ Piksel Dogrulugu</div>
+  </div>
+</section>
+
+<!-- OZELLIKLER -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Ozellikler</h2>
+  <p class="section-sub">Etiket tasarimindan goruntu analizine, toplu islemeden kod duzenleyiciye kadar her sey tek bir uygulamada.</p>
+
+  <div class="features">
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-blue">&#9998;</span> WYSIWYG Gorsel Editor</h3>
+      <p>Surekle-birak arayuzu ile etiket elemanlarini gorsel olarak duzenleyin. Her degisiklik aninda ZPL koduna yansir.</p>
+    </div>
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-green">&#8644;</span> Cift Yonlu Senkronizasyon</h3>
+      <p>Kod degisiklikleri aninda canvasa, canvas degisiklikleri aninda koda yansir. 500ms debounce ile akici deneyim.</p>
+    </div>
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-purple">&#128065;</span> Goruntu Analizi</h3>
+      <p>Etiket gorselini iceri aktarin, barkod/QR/metin/cizgi bolgeleri otomatik tespit edilsin, ZPL koduna donusturulsun.</p>
+    </div>
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-orange">&#9881;</span> OCR Motor Secimi</h3>
+      <p>RapidOCR, EasyOCR veya Tesseract arasinda secim yapin. Auto modunda mevcut tum motorlar kullanilir.</p>
+    </div>
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-blue">&#128230;</span> Toplu Isleme (Batch)</h3>
+      <p>Birden fazla etiket gorseli secin, hepsini tek seferde analiz edip ZPL dosyalari olarak kaydedin.</p>
+    </div>
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-green">&#127912;</span> Yerel Render</h3>
+      <p>Labelary API'ye gerek kalmadan ZPL etiketlerini yerel olarak Qt ile render edin.</p>
+    </div>
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-purple">&#128193;</span> Dosya Yonetimi</h3>
+      <p>ZPL dosyasi ac/kaydet, PNG/PDF olarak disari aktar, panoya yapistir.</p>
+    </div>
+    <div class="feature-card">
+      <h3><span class="fc-icon fc-orange">&#127769;</span> Koyu / Acik Tema</h3>
+      <p>VS Code esintili koyu tema ve goz yormayan acik tema secenegi.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ARAYUZ TANITIMI -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Uygulama Arayuzu</h2>
+  <p class="section-sub">Uc panelli ana ekran: sol tarafta etiket listesi, ortada ZPL kod editoru, sagda gorsel canvas.</p>
+
+  <!-- Ana Pencere Mockup -->
+  <div class="ui-mockup">
+    <div class="ui-titlebar">
+      <div class="ui-dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+      ZPL Visual Editor - Shipping Label
+    </div>
+    <div class="ui-body">
+      <!-- Label List -->
+      <div class="ui-panel ui-panel-label-list">
+        <div class="ui-panel-title">Etiket Listesi</div>
+        <div class="ui-label-item active">gen_label_A.png</div>
+        <div class="ui-label-item">gen_label_B.png</div>
+        <div class="ui-label-item">gen_label_C.png</div>
+        <div class="ui-label-item">gen_label_D.png</div>
+        <div style="margin-top:auto; display:flex; gap:4px;">
+          <div class="ui-btn ui-btn-default" style="flex:1; text-align:center;">Import</div>
+          <div class="ui-btn ui-btn-default" style="flex:1; text-align:center;">New</div>
+        </div>
+      </div>
+      <!-- Code Editor -->
+      <div class="ui-panel ui-panel-code">
+        <div class="ui-panel-title">ZPL Kod Editoru</div>
+        <div class="code-line"><span class="kw">^XA</span></div>
+        <div class="code-line"><span class="kw">^PW</span>812</div>
+        <div class="code-line"><span class="kw">^LL</span>1218</div>
+        <div class="code-line"><span class="cm">^FX -- Baslik --</span></div>
+        <div class="code-line"><span class="kw">^FO</span>50,50<span class="kw">^A0N</span>,40,40</div>
+        <div class="code-line"><span class="kw">^FD</span><span class="str">Yurtici Kargo</span><span class="kw">^FS</span></div>
+        <div class="code-line"><span class="cm">^FX -- Cizgi --</span></div>
+        <div class="code-line"><span class="kw">^FO</span>50,100<span class="kw">^GB</span>712,0,3<span class="kw">^FS</span></div>
+        <div class="code-line"><span class="cm">^FX -- Alici --</span></div>
+        <div class="code-line"><span class="kw">^FO</span>50,120<span class="kw">^A0N</span>,28,28</div>
+        <div class="code-line"><span class="kw">^FD</span><span class="str">Ahmet Yilmaz</span><span class="kw">^FS</span></div>
+        <div class="code-line"><span class="kw">^FO</span>50,155<span class="kw">^A0N</span>,22,22</div>
+        <div class="code-line"><span class="kw">^FD</span><span class="str">Ataturk Cad. No:45</span><span class="kw">^FS</span></div>
+        <div class="code-line"><span class="cm">^FX -- Barkod --</span></div>
+        <div class="code-line"><span class="kw">^FO</span>100,300<span class="kw">^BY</span>3</div>
+        <div class="code-line"><span class="kw">^BCN</span>,120,Y,N,N</div>
+        <div class="code-line"><span class="kw">^FD</span><span class="str">7290012345678</span><span class="kw">^FS</span></div>
+        <div class="code-line"><span class="kw">^XZ</span></div>
+      </div>
+      <!-- Canvas -->
+      <div class="ui-panel ui-panel-canvas">
+        <div class="canvas-label">
+          <div class="cl-title">Yurtici Kargo</div>
+          <div><b>Alici:</b></div>
+          <div><b>Ahmet Yilmaz</b></div>
+          <div>Ataturk Cad. No:45</div>
+          <div>Kadikoy / Istanbul</div>
+          <div>Tel: 0532 123 4567</div>
+          <div style="border-top:2px solid #000; margin:4px 0;"></div>
+          <div class="cl-big">Trendyol</div>
+          <div style="border-top:1px solid #000; margin:4px 0;"></div>
+          <div>Siparis: TRN-2024-987654</div>
+          <div>Gonderi: 7290012345678</div>
+          <div class="cl-bar"></div>
+          <div style="text-align:center; font-size:0.85em;">7290012345678</div>
+          <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <div><small>Tarih: 05.03.2026<br>Agirlik: 1.2 kg</small></div>
+            <div class="cl-qr"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Analysis Tab Mockup -->
+  <h3 style="margin: 40px 0 12px; font-size: 1.2em;">Image Analysis Sekmesi</h3>
+  <p style="color: var(--text2); margin-bottom: 16px;">Etiket gorselini analiz edin, bolgeleri gorun, ZPL kodu uretin veya toplu isleme baslatin.</p>
+
+  <div class="ui-mockup">
+    <div class="ui-titlebar">
+      <div class="ui-dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+      Image Analysis - gen_label_A.png
+    </div>
+    <div>
+      <div class="ui-tabs">
+        <div class="ui-tab">Linter Warnings</div>
+        <div class="ui-tab active">Image Analysis</div>
+      </div>
+      <div class="ui-analysis-bar">
+        <div class="ui-btn ui-btn-default">Analyze Image</div>
+        <div class="ui-btn ui-btn-primary">Generate ZPL from Image</div>
+        <div class="ui-btn ui-btn-green">Batch Process...</div>
+        <span style="font-size:0.7em; color:var(--text2); margin-left:8px;">OCR Engine:</span>
+        <select class="ui-select">
+          <option>Tesseract</option>
+          <option>Auto (All Available)</option>
+          <option>RapidOCR</option>
+          <option>EasyOCR</option>
+        </select>
+      </div>
+      <div class="ui-legend">
+        <span><span class="ldot" style="background:#00c800;"></span> Barcode</span>
+        <span><span class="ldot" style="background:#0064ff;"></span> QR Code</span>
+        <span><span class="ldot" style="background:#ffc800;"></span> Text</span>
+        <span><span class="ldot" style="background:#ff3232;"></span> Image</span>
+        <span><span class="ldot" style="background:#b400ff;"></span> H-Line / V-Line</span>
+        <span><span class="ldot" style="background:#00c8c8;"></span> Box</span>
+      </div>
+      <div style="display:flex; gap:8px; padding:6px 10px; align-items:center; flex-wrap:wrap;">
+        <span style="font-size:0.7em; color:var(--text2);">Tesseract:</span>
+        <input class="ui-input" type="text" value="C:\Program Files\Tesseract-OCR\tesseract.exe" readonly style="max-width:400px;">
+        <div class="ui-btn ui-btn-default">...</div>
+      </div>
+      <div style="background:#1e1e1e; height: 160px; display:flex; align-items:center; justify-content:center; margin:10px; border-radius:8px; border:1px solid var(--border);">
+        <span style="color:var(--text2); font-size:0.85em;">Etiket gorseli ve renkli tespit kutuculari burada gosterilir</span>
+      </div>
+      <div style="padding:6px 10px; font-size:0.7em; color:var(--text2);">
+        Analysis complete: 22 regions detected (2 Barcode, 13 Text, 4 H-Line, 2 V-Line, 1 Image) | Engine: Tesseract
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ORNEK ETIKETLER -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Ornek Kargo Etiketleri</h2>
+  <p class="section-sub">8 farkli duzende (A-H), farkli kargo firmalari ve satis kanallari ile uretilmis test etiketleri.</p>
+
+  <div class="gallery">
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_A.png" alt="Label A - Yurtici Kargo / Trendyol" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen A - Yurtici / Trendyol</span>
+        <span class="score">%97.0</span>
+      </div>
+    </div>
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_B.png" alt="Label B - Aras Kargo / N11" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen B - Aras / N11</span>
+        <span class="score">%97.4</span>
+      </div>
+    </div>
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_C.png" alt="Label C - Surat Kargo / GittiGidiyor" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen C - Surat / GittiGidiyor</span>
+        <span class="score">%97.3</span>
+      </div>
+    </div>
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_D.png" alt="Label D - MNG Kargo / Hepsiburada" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen D - MNG / Hepsiburada</span>
+        <span class="score">%96.9</span>
+      </div>
+    </div>
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_E.png" alt="Label E - HepsiJet / Ciceksepeti" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen E - HepsiJet / Ciceksepeti</span>
+        <span class="score">%97.3</span>
+      </div>
+    </div>
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_F.png" alt="Label F - PTT Kargo / Amazon" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen F - PTT / Amazon</span>
+        <span class="score">%97.0</span>
+      </div>
+    </div>
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_G.png" alt="Label G - Trendyol Express" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen G - Trendyol Express</span>
+        <span class="score">%97.1</span>
+      </div>
+    </div>
+    <div class="gallery-item">
+      <img src="TestData/input/gen_label_H.png" alt="Label H - Yurtici Kargo / N11" loading="lazy">
+      <div class="caption">
+        <span class="name">Duzen H - Yurtici / N11</span>
+        <span class="score">%97.9</span>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- KULLANIM KILAVUZU -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Kullanim Kilavuzu</h2>
+  <p class="section-sub">Adim adim uygulamayi nasil kullanacaginizi ogrenin.</p>
+
+  <h3 style="margin-bottom:16px; color:var(--accent);">A. Tekli Goruntu Analizi</h3>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <h3>Gorseli Iceri Aktarin</h3>
+        <p>Sol paneldeki <b>Import</b> butonuna tiklayarak veya <kbd>Ctrl</kbd>+<kbd>I</kbd> kisayolu ile etiket gorsellerini (PNG, JPG, BMP) secin. Birden fazla dosya secebilirsiniz.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <h3>Etiketi Secin</h3>
+        <p>Sol paneldeki listeden analiz etmek istediginiz etikete tiklayin. Gorsel alt panelde <b>Image Analysis</b> sekmesinde gosterilir.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <h3>OCR Motorunu Secin</h3>
+        <p>Ust barda bulunan <b>OCR Engine</b> acilir menusunden kullanmak istediginiz motoru secin. Kurulu olmayan motorlar gri renkte gosterilir.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <h3>Goruntusunu Analiz Edin</h3>
+        <p><b>Analyze Image</b> butonuna tiklayin. Sistem barkod, QR kod, metin, cizgi ve gorsel bolgelerini otomatik tespit eder. Renkli kutucuklar ile sonuclari gorun.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-content">
+        <h3>ZPL Kodu Uretin</h3>
+        <p><b>Generate ZPL from Image</b> butonuna tiklayin. Tespit edilen bolgeler yapisal ZPL koduna donusturulur ve kod editorunde gosterilir. Canvas'ta onizleme yapabilirsiniz.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-content">
+        <h3>Kaydedin</h3>
+        <p><kbd>Ctrl</kbd>+<kbd>S</kbd> ile ZPL kodunu kaydedin veya <b>File &gt; Export PNG</b> ile gorsel olarak disari aktarin.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin:40px 0 16px; color:var(--accent2);">B. Toplu Isleme (Batch Processing)</h3>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <h3>Batch Process Baslatin</h3>
+        <p>Image Analysis sekmesindeki yesil <b>Batch Process...</b> butonuna tiklayin.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <h3>Gorselleri Secin</h3>
+        <p>Acilan dosya iletisim kutusundan donusturmek istediginiz tum etiket gorsellerini secin. Birden fazla dosya secebilirsiniz.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <h3>Cikti Klasorunu Secin</h3>
+        <p>ZPL dosyalarinin kaydedilecegi klasoru secin. Her gorsel icin ayri bir <code>.zpl</code> dosyasi olusturulur.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <h3>Islemi Takip Edin</h3>
+        <p>Ilerleme cubugu ile islemi takip edin. Iptal etmek isterseniz <b>Cancel</b> butonuna tiklayin. Sonucta basarili/basarisiz raporu gosterilir.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- DESTEKLENEN ZPL KOMUTLARI -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Desteklenen ZPL Komutlari</h2>
+  <p class="section-sub">Tum temel ve gelismis ZPL komutlari desteklenir.</p>
+
+  <table class="info-table">
+    <thead>
+      <tr><th>Kategori</th><th>Komutlar</th><th>Aciklama</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>Temel</b></td>
+        <td><code>^XA</code> <code>^XZ</code> <code>^FO</code> <code>^FT</code> <code>^FD</code> <code>^FS</code> <code>^A</code> <code>^CF</code> <code>^CI</code></td>
+        <td>Etiket baslangic/bitis, konum, metin, font ayarlari</td>
+      </tr>
+      <tr>
+        <td><b>Sekiller</b></td>
+        <td><code>^GB</code> <code>^GC</code> <code>^GD</code></td>
+        <td>Dikdortgen, cizgi, daire, capraz cizgi</td>
+      </tr>
+      <tr>
+        <td><b>Barkod</b></td>
+        <td><code>^BC</code> <code>^B3</code> <code>^BE</code> <code>^BY</code> <code>^BQ</code></td>
+        <td>Code 128, Code 39, EAN-13, barkod ayarlari, QR kod</td>
+      </tr>
+      <tr>
+        <td><b>Grafik</b></td>
+        <td><code>^GFA</code> <code>^FR</code></td>
+        <td>Bitmap grafik (ASCII), ters renk (beyaz uzerine siyah)</td>
+      </tr>
+      <tr>
+        <td><b>Duzen</b></td>
+        <td><code>^FB</code> <code>^FW</code> <code>^PW</code> <code>^LL</code> <code>^LH</code></td>
+        <td>Cok satirli metin, yon, genislik, yukseklik, baslangic noktasi</td>
+      </tr>
+      <tr>
+        <td><b>Diger</b></td>
+        <td><code>^FX</code></td>
+        <td>Yorum satiri</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<!-- HIZLI BASLANGIÇ -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Hizli Baslangic</h2>
+  <p class="section-sub">Uygulamayi calistirmanin en kolay yolu -- hicbir manuel kurulum gerektirmez.</p>
+
+  <div class="features" style="grid-template-columns: 1fr 1fr;">
+    <div class="feature-card" style="border-color: var(--accent);">
+      <h3><span class="fc-icon fc-blue">&#9654;</span> Windows</h3>
+      <p style="margin-bottom:12px;"><code>run.bat</code> dosyasina cift tiklayin.</p>
+      <p style="font-size:0.8em; color:var(--text2);">Ilk calistirmada otomatik olarak sanal ortam olusturulur, bagimliliklar yuklenir ve uygulama baslatilir. Sonraki calistirmalarda dogrudan acilir.</p>
+    </div>
+    <div class="feature-card" style="border-color: var(--accent2);">
+      <h3><span class="fc-icon fc-green">&#9654;</span> Linux / macOS</h3>
+      <div class="code-block" style="margin:8px 0; padding:10px 14px; font-size:0.85em;">
+<span class="prompt">$</span> chmod +x run.sh
+<span class="prompt">$</span> ./run.sh
+      </div>
+      <p style="font-size:0.8em; color:var(--text2);">Ilk calistirmada otomatik olarak sanal ortam olusturulur, bagimliliklar yuklenir ve uygulama baslatilir.</p>
+    </div>
+  </div>
+
+  <div class="alert alert-info" style="margin-top:24px;">
+    <span class="alert-icon">&#9432;</span>
+    <div>
+      <b>Not:</b> Baslangic scriptleri Python 3.10+ kurulu olmaligini kontrol eder.
+      Eger Python yoksa sizi indirme sayfasina yonlendirir.
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- EXE -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Windows EXE (Bagimsiz Calistirma)</h2>
+  <p class="section-sub">Python kurulumu gerektirmeden dogrudan calistirilabiir Windows uygulamasi.</p>
+
+  <div class="step" style="margin-bottom:20px;">
+    <div class="step-num">&#10003;</div>
+    <div class="step-content">
+      <h3>Hazir EXE Kullanimi</h3>
+      <p><code>dist/ZPL_Editor/</code> klasorundeki <b>ZPL_Editor.exe</b> dosyasini calistirin. Python kurulumu gerektirmez. Klasorun tamami gereklidir (DLL ve veri dosyalari dahil).</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">&#9881;</div>
+    <div class="step-content">
+      <h3>Kendiniz Derlemek Isterseniz</h3>
+      <div class="code-block" style="margin:8px 0;">
+<span class="prompt">$</span> pip install pyinstaller
+<span class="prompt">$</span> pyinstaller zpl_editor.spec --noconfirm
+      </div>
+      <p>Cikti <code>dist/ZPL_Editor/</code> klasorune olusturulur. EasyOCR'nin PyTorch bagimliligi nedeniyle toplam boyut ~700 MB civarindadir.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- KURULUM -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Manuel Kurulum</h2>
+  <p class="section-sub">Baslangic scriptleri yerine manuel kurulum yapmak isteyenler icin.</p>
+
+  <h3 style="margin-bottom: 12px;">1. Gereksinimler</h3>
+  <table class="info-table">
+    <thead><tr><th>Gereksinim</th><th>Aciklama</th></tr></thead>
+    <tbody>
+      <tr><td><b>Python 3.10+</b></td><td>Python yorumlayicisi</td></tr>
+      <tr><td><b>Tesseract OCR</b></td><td>
+        Metin tanima motoru. <a href="https://github.com/UB-Mannheim/tesseract/wiki" target="_blank">Buradan indirin</a>.<br>
+        Varsayilan yol: <code>C:\Program Files\Tesseract-OCR\tesseract.exe</code><br>
+        Farkli yola kurduysaniz <b>Edit &gt; Settings</b> menusunden veya Image Analysis sekmesinden degistirebilirsiniz.
+      </td></tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin: 24px 0 12px;">2. Kurulum Adimlari</h3>
+
+  <h4 style="margin-bottom: 8px; color: var(--accent);">Windows</h4>
+  <div class="code-block">
+<span class="comment"># Repoyu klonlayin</span>
+<span class="prompt">$</span> git clone https://github.com/katifurkan/Zpl.git
+<span class="prompt">$</span> cd Zpl
+
+<span class="comment"># Sanal ortam olusturun ve aktiflestin</span>
+<span class="prompt">$</span> python -m venv .venv
+<span class="prompt">$</span> .venv\Scripts\activate
+
+<span class="comment"># Bagimliliklari yukleyin</span>
+<span class="prompt">$</span> pip install -r requirements.txt
+<span class="prompt">$</span> pip install opencv-python
+
+<span class="comment"># Calistirin</span>
+<span class="prompt">$</span> python main.py
+  </div>
+
+  <h4 style="margin: 16px 0 8px; color: var(--accent2);">Linux / macOS</h4>
+  <div class="code-block">
+<span class="comment"># Repoyu klonlayin</span>
+<span class="prompt">$</span> git clone https://github.com/katifurkan/Zpl.git
+<span class="prompt">$</span> cd Zpl
+
+<span class="comment"># Sanal ortam olusturun ve aktiflestin</span>
+<span class="prompt">$</span> python3 -m venv .venv
+<span class="prompt">$</span> source .venv/bin/activate
+
+<span class="comment"># Bagimliliklari yukleyin</span>
+<span class="prompt">$</span> pip install -r requirements.txt
+<span class="prompt">$</span> pip install opencv-python
+
+<span class="comment"># Calistirin</span>
+<span class="prompt">$</span> python main.py
+  </div>
+
+  <h3 style="margin: 24px 0 12px;">3. Testleri Calistirma</h3>
+  <div class="code-block">
+<span class="comment"># Piksel benzerlik testi (tum etiketler >= %95 hedefi)</span>
+<span class="prompt">$</span> python test_pixel_loop.py
+
+<span class="comment"># Detayli band karsilastirma</span>
+<span class="prompt">$</span> python test_compare.py
+  </div>
+
+  <div class="alert alert-info">
+    <span class="alert-icon">&#9432;</span>
+    <div>
+      <b>Tesseract Yolu:</b> Eger Tesseract farkli bir konuma kuruluysa, uygulamayi acin,
+      <b>Edit &gt; Settings</b> menusune gidin veya <b>Image Analysis</b> sekmesindeki
+      <b>Tesseract</b> satirindaki <b>...</b> butonuyla dogru yolu secin. Ayar otomatik olarak kaydedilir.
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- PYTHON PAKETLERI -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Python Bagimliliklari</h2>
+  <p class="section-sub">Projede kullanilan Python kutuphaneleri.</p>
+
+  <table class="info-table">
+    <thead><tr><th>Paket</th><th>Amac</th></tr></thead>
+    <tbody>
+      <tr><td><code>PyQt6</code></td><td>GUI framework (pencere, canvas, dialog, toolbar)</td></tr>
+      <tr><td><code>numpy</code></td><td>Goruntu isleme icin dizi operasyonlari</td></tr>
+      <tr><td><code>opencv-python</code></td><td>Goruntu analizi, kontur tespiti, on-isleme</td></tr>
+      <tr><td><code>pytesseract</code></td><td>Tesseract OCR Python sarmalayicisi</td></tr>
+      <tr><td><code>rapidocr_onnxruntime</code></td><td>Birincil OCR motoru (pure pip, ~15MB ONNX modeller)</td></tr>
+      <tr><td><code>easyocr</code></td><td>Ikincil OCR motoru (PyTorch tabanli)</td></tr>
+      <tr><td><code>pyzbar</code></td><td>Barkod ve QR kod okuma</td></tr>
+      <tr><td><code>qrcode</code></td><td>QR kod olusturma</td></tr>
+      <tr><td><code>python-barcode</code></td><td>1D barkod olusturma</td></tr>
+      <tr><td><code>requests</code></td><td>Labelary API (opsiyonel, render icin)</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<!-- KISAYOLLAR -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Klavye Kisayollari</h2>
+  <p class="section-sub">Hizli erisim icin klavye kisayollari.</p>
+
+  <table class="info-table">
+    <thead><tr><th>Kisayol</th><th>Islem</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td><td>Yeni etiket</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>ZPL dosyasi ac</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>ZPL dosyasi kaydet</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td><td>Gorsel iceri aktar</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></td><td>Panodan gorsel yapistir</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Geri al</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Yinele</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Tumunu sec</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Secili elemani klonla</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Izgaraya yapismayi ac/kapat</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>R</kbd></td><td>ZPL kodunu yeniden render et</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>=</kbd></td><td>Yaklas (zoom in)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>-</kbd></td><td>Uzaklas (zoom out)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd></td><td>Pencereye sigdir</td></tr>
+      <tr><td><kbd>Delete</kbd></td><td>Secili elemani sil</td></tr>
+      <tr><td>Ok tuslari</td><td>Secili elemani 1px tasi</td></tr>
+      <tr><td><kbd>Shift</kbd>+Ok tuslari</td><td>Secili elemani 10px tasi</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<!-- KOORDINAT SISTEMI -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Koordinat Sistemi ve Olculer</h2>
+  <p class="section-sub">ZPL etiketlerinde kullanilan koordinat sistemi ve birim donusumleri.</p>
+
+  <div class="features" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));">
+    <div class="feature-card">
+      <h3>Baslangic Noktasi</h3>
+      <p>Sol ust kose (0, 0). X saga, Y asagiya artar.</p>
+    </div>
+    <div class="feature-card">
+      <h3>Birim: Dot (Nokta)</h3>
+      <p>Tum koordinatlar dot cinsindendir. 1 dot = yazici DPI'inda 1 piksel.</p>
+    </div>
+    <div class="feature-card">
+      <h3>203 DPI (Varsayilan)</h3>
+      <p>1 mm = 8 dot<br>1 inch = 203 dot</p>
+    </div>
+    <div class="feature-card">
+      <h3>4" x 6" Standart Etiket</h3>
+      <p>812 x 1218 dot<br>(~102mm x 152mm)</p>
+    </div>
+  </div>
+
+  <div class="alert alert-warn" style="margin-top:24px;">
+    <span class="alert-icon">&#9888;</span>
+    <div>
+      <b>^FO vs ^FT:</b> <code>^FO</code> sol ust koseyi, <code>^FT</code> baseline (sol alt) konumunu belirtir.
+      Her iki komut da desteklenir ancak konum hesaplamasinda fark vardir.
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- PROJE YAPISI -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Proje Yapisi</h2>
+  <p class="section-sub">Kaynak kod organizasyonu.</p>
+
+  <div class="code-block" style="font-size:0.8em; line-height:1.7;">
+run.bat                              <span class="comment"># Windows baslangic scripti (cift tikla)</span>
+run.sh                               <span class="comment"># Linux/macOS baslangic scripti (./run.sh)</span>
+zpl_editor.spec                      <span class="comment"># PyInstaller build dosyasi (EXE olusturma)</span>
+zpl_editor/
+├── main.py, app.py                  <span class="comment"># Giris noktalari</span>
+├── core/
+│   ├── zpl_parser.py                <span class="comment"># ZPL kodu -> LabelModel</span>
+│   ├── zpl_generator.py             <span class="comment"># LabelModel -> ZPL kodu</span>
+│   ├── zpl_commands.py              <span class="comment"># ZPLElement, LabelSettings</span>
+│   ├── zpl_renderer.py              <span class="comment"># Yerel ZPL -> PNG render</span>
+│   ├── label_model.py               <span class="comment"># Etiket veri modeli</span>
+│   └── coordinate_system.py         <span class="comment"># DPI/dot/mm/inch donusumleri</span>
+├── elements/
+│   ├── base_element.py              <span class="comment"># Temel element sinifi</span>
+│   ├── text_element.py              <span class="comment"># Metin (^FO + ^A + ^FD)</span>
+│   ├── barcode_element.py           <span class="comment"># Barkod (^BC, ^B3, ^BY)</span>
+│   ├── qr_element.py                <span class="comment"># QR kod (^BQ)</span>
+│   ├── box_element.py               <span class="comment"># Dikdortgen (^GB)</span>
+│   ├── line_element.py              <span class="comment"># Cizgi (^GB)</span>
+│   ├── circle_element.py            <span class="comment"># Daire (^GC)</span>
+│   ├── diagonal_line.py             <span class="comment"># Capraz cizgi (^GD)</span>
+│   └── image_element.py             <span class="comment"># Bitmap (^GFA)</span>
+├── ui/
+│   ├── main_window.py               <span class="comment"># Ana pencere + toplu isleme</span>
+│   ├── code_editor.py               <span class="comment"># ZPL editoru (syntax highlight)</span>
+│   ├── canvas_view.py               <span class="comment"># Gorsel canvas (zoom/pan)</span>
+│   ├── canvas_scene.py              <span class="comment"># Element yonetimi</span>
+│   ├── property_panel.py            <span class="comment"># Ozellik paneli</span>
+│   ├── toolbar.py                   <span class="comment"># Ust arac cubugu</span>
+│   ├── statusbar.py                 <span class="comment"># Alt durum cubugu</span>
+│   ├── settings_dialog.py           <span class="comment"># Edit &gt; Settings (Tesseract yolu)</span>
+│   └── image_analysis_view.py       <span class="comment"># OCR analiz + batch isleme</span>
+├── image_processing/
+│   ├── image_analyzer.py            <span class="comment"># Goruntu analizi motoru</span>
+│   └── zpl_from_image.py            <span class="comment"># Tespit -> ZPL donusumu</span>
+├── graphics/
+│   ├── selection_handles.py         <span class="comment"># 8 noktali resize</span>
+│   ├── grid_overlay.py              <span class="comment"># Izgara</span>
+│   ├── ruler.py                     <span class="comment"># Cetvel</span>
+│   └── zoom_controller.py           <span class="comment"># Zoom yonetimi</span>
+├── fonts/
+│   ├── zebra_fonts.py               <span class="comment"># Zebra font tanimlari</span>
+│   └── font_mapper.py               <span class="comment"># ZPL font -> QFont esleme</span>
+└── utils/
+    ├── undo_redo.py                 <span class="comment"># Geri al / yinele</span>
+    ├── clipboard.py                 <span class="comment"># Kopyala / yapistir</span>
+    ├── export.py                    <span class="comment"># PNG disari aktarim</span>
+    └── settings.py                  <span class="comment"># Ayarlar (Tesseract yolu, QSettings)</span>
+  </div>
+</div>
+</section>
+
+<!-- TEST -->
+<section class="section">
+<div class="container">
+  <h2 class="section-title">Test Sonuclari</h2>
+  <p class="section-sub">8 test etiketi uzerinde piksel benzerlik analizi. Hedef: >= %95.</p>
+
+  <table class="info-table">
+    <thead><tr><th>Etiket</th><th>Benzerlik</th><th>Sonuc</th></tr></thead>
+    <tbody>
+      <tr><td>gen_label_A (Yurtici / Trendyol)</td><td>%97.0</td><td style="color:var(--accent2);">PASS</td></tr>
+      <tr><td>gen_label_B (Aras / N11)</td><td>%97.4</td><td style="color:var(--accent2);">PASS</td></tr>
+      <tr><td>gen_label_C (Surat / GittiGidiyor)</td><td>%97.3</td><td style="color:var(--accent2);">PASS</td></tr>
+      <tr><td>gen_label_D (MNG / Hepsiburada)</td><td>%96.9</td><td style="color:var(--accent2);">PASS</td></tr>
+      <tr><td>gen_label_E (HepsiJet / Ciceksepeti)</td><td>%97.3</td><td style="color:var(--accent2);">PASS</td></tr>
+      <tr><td>gen_label_F (PTT / Amazon)</td><td>%97.0</td><td style="color:var(--accent2);">PASS</td></tr>
+      <tr><td>gen_label_G (Trendyol Express)</td><td>%97.1</td><td style="color:var(--accent2);">PASS</td></tr>
+      <tr><td>gen_label_H (Yurtici / N11)</td><td>%97.9</td><td style="color:var(--accent2);">PASS</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:12px; color:var(--accent2); font-weight:600; font-size:1.1em;">8/8 test basarili (esik: >= %95.0)</p>
+</div>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <p>ZPL Visual Editor &copy; 2026 &mdash; Python + PyQt6 ile gelistirilmistir.</p>
+</footer>
+
+</body>
+</html>
