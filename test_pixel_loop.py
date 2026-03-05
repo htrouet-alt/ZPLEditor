@@ -1,193 +1,263 @@
 """
-Pixel-Perfect ZPL Test Loop
-Iteratively tests and reports label similarity.
+Test: Image → ZPL → Local Render → Pixel Similarity comparison.
+
+Pipeline per label:
+  1. Load input PNG from TestData/input/
+  2. ImageAnalyzer → detect regions
+  3. ZPLFromImage → generate ZPL code
+  4. ZPLRenderer  → render ZPL to PNG locally (no Labelary API)
+  5. Compare original vs rendered pixel-by-pixel
+
+Outputs:
+  TestData/output/ZPLCode/   → generated .zpl files
+  TestData/output/ZplImage/  → rendered .png files
+  TestData/output/Diff/      → side-by-side comparison images
+
+Pass threshold: >= 95% pixel similarity (relaxed 1px tolerance)
 """
-import cv2
-import numpy as np
+
 import os
 import sys
 import time
-import requests
+import glob
+import cv2
+import numpy as np
 
-sys.path.insert(0, os.path.dirname(__file__))
+# -- paths --------------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+INPUT_DIR = os.path.join(BASE_DIR, "TestData", "input")
+OUT_ZPL = os.path.join(BASE_DIR, "TestData", "output", "ZPLCode")
+OUT_IMG = os.path.join(BASE_DIR, "TestData", "output", "ZplImage")
+OUT_DIFF = os.path.join(BASE_DIR, "TestData", "output", "Diff")
 
-from zpl_editor.image_processing.image_analyzer import ImageAnalyzer
-from zpl_editor.image_processing.zpl_from_image import ZPLFromImage
+os.makedirs(OUT_ZPL, exist_ok=True)
+os.makedirs(OUT_IMG, exist_ok=True)
+os.makedirs(OUT_DIFF, exist_ok=True)
 
+# Ensure project root is on path
+sys.path.insert(0, BASE_DIR)
 
-def render_via_labelary(zpl_code: str, width_inches, height_inches, dpi=203,
-                        max_retries=3) -> bytes:
-    dpmm = round(dpi / 25.4)
-    url = f"http://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{width_inches}x{height_inches}/0/"
-    headers = {"Accept": "image/png"}
-    for attempt in range(max_retries):
-        try:
-            resp = requests.post(url, data=zpl_code.encode("utf-8"),
-                                 headers=headers, timeout=30)
-            if resp.status_code == 200:
-                return resp.content
-            print(f"  Labelary {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            print(f"  Labelary attempt {attempt+1} failed: {e}")
-        if attempt < max_retries - 1:
-            time.sleep(2)
-    return None
+# -- env flags ----------------------------------------------------------
+# Disable full-bitmap fallback so we test structured ZPL accuracy
+os.environ["ZPL_FORCE_FULL_BITMAP_ON_LOW_SIMILARITY"] = "0"
+os.environ["ZPL_ALLOW_FULL_BITMAP_FALLBACK"] = "0"
 
-
-def compare_images(input_path: str, output_path: str):
-    """Compare input vs output images, return similarity metrics."""
-    img_in = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-    img_out = cv2.imread(output_path, cv2.IMREAD_GRAYSCALE)
-    if img_in is None or img_out is None:
-        return None
-
-    # Resize output to match input if needed
-    if img_in.shape != img_out.shape:
-        img_out = cv2.resize(img_out, (img_in.shape[1], img_in.shape[0]),
-                             interpolation=cv2.INTER_AREA)
-
-    # Binary threshold
-    _, bin_in = cv2.threshold(img_in, 128, 255, cv2.THRESH_BINARY_INV)
-    _, bin_out = cv2.threshold(img_out, 128, 255, cv2.THRESH_BINARY_INV)
-
-    fg_in = np.sum(bin_in > 0)
-    fg_out = np.sum(bin_out > 0)
-    total_pixels = img_in.shape[0] * img_in.shape[1]
-
-    # Match: pixels that are foreground in both OR background in both
-    match = np.sum(bin_in == bin_out)
-    similarity = match / total_pixels * 100
-
-    # Missed: foreground in input but not in output
-    missed = np.sum((bin_in > 0) & (bin_out == 0))
-    missed_pct = missed / max(fg_in, 1) * 100
-
-    # False positive: foreground in output but not in input
-    false_pos = np.sum((bin_out > 0) & (bin_in == 0))
-    false_pos_pct = false_pos / max(fg_out, 1) * 100
-
-    # Analyze worst regions (50px Y-bands)
-    worst_bands = []
-    band_size = 50
-    for band_y in range(0, img_in.shape[0], band_size):
-        band_in = bin_in[band_y:band_y + band_size, :]
-        band_out = bin_out[band_y:band_y + band_size, :]
-        band_fg_in = np.sum(band_in > 0)
-        if band_fg_in > 100:  # Only significant bands
-            band_missed = np.sum((band_in > 0) & (band_out == 0))
-            band_missed_pct = band_missed / band_fg_in * 100
-            if band_missed_pct > 50:
-                worst_bands.append((band_y, band_missed_pct, band_fg_in))
-
-    return {
-        "similarity": similarity,
-        "missed_pct": missed_pct,
-        "false_pos_pct": false_pos_pct,
-        "fg_in": fg_in,
-        "fg_out": fg_out,
-        "worst_bands": sorted(worst_bands, key=lambda x: -x[1])[:5]
-    }
+PASS_THRESHOLD = 95.0  # minimum % pixel similarity to pass
 
 
-def process_and_compare(iteration: int):
-    """Process all labels and return comparison results."""
-    base_dir = os.path.dirname(__file__)
-    input_dir = os.path.join(base_dir, "Examples", "input")
-    zpl_dir = os.path.join(base_dir, "Examples", "output", "ZPLCode")
-    img_dir = os.path.join(base_dir, "Examples", "output", "ZplImage")
+def pixel_similarity(img_a: np.ndarray, img_b: np.ndarray, tolerance_px: int = 1) -> float:
+    """Compute relaxed pixel similarity between two grayscale images.
+    Uses 1px dilation tolerance to handle sub-pixel rendering differences."""
 
-    os.makedirs(zpl_dir, exist_ok=True)
-    os.makedirs(img_dir, exist_ok=True)
+    # Resize to same dimensions if needed
+    h = max(img_a.shape[0], img_b.shape[0])
+    w = max(img_a.shape[1], img_b.shape[1])
+    if img_a.shape[:2] != (h, w):
+        img_a = cv2.resize(img_a, (w, h), interpolation=cv2.INTER_NEAREST)
+    if img_b.shape[:2] != (h, w):
+        img_b = cv2.resize(img_b, (w, h), interpolation=cv2.INTER_NEAREST)
 
-    results = {}
+    # Binarize
+    _, bin_a = cv2.threshold(img_a, 128, 255, cv2.THRESH_BINARY)
+    _, bin_b = cv2.threshold(img_b, 128, 255, cv2.THRESH_BINARY)
+
+    # Strict match
+    strict_match = np.sum(bin_a == bin_b)
+    total = bin_a.size
+    strict_pct = 100.0 * strict_match / total
+
+    # Relaxed: dilate both and check again
+    if tolerance_px > 0:
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,
+                                           (2 * tolerance_px + 1, 2 * tolerance_px + 1))
+        dil_a = cv2.dilate(255 - bin_a, kernel)
+        dil_b = cv2.dilate(255 - bin_b, kernel)
+
+        # For each black pixel in A, is there a nearby black pixel in B?
+        ink_a = (bin_a == 0)
+        ink_b = (bin_b == 0)
+        a_covered = ink_a & (dil_b > 0)
+        b_covered = ink_b & (dil_a > 0)
+        white_match = (~ink_a & ~ink_b)
+
+        matched = np.sum(a_covered) + np.sum(b_covered) + np.sum(white_match)
+        # Avoid double-counting: total compared = ink_a + ink_b + white_match
+        compared = np.sum(ink_a) + np.sum(ink_b) + np.sum(white_match)
+        relaxed_pct = 100.0 * matched / max(compared, 1)
+    else:
+        relaxed_pct = strict_pct
+
+    return relaxed_pct
+
+
+def create_diff_image(original: np.ndarray, rendered: np.ndarray) -> np.ndarray:
+    """Create a side-by-side comparison with diff overlay."""
+    h = max(original.shape[0], rendered.shape[0])
+    w = max(original.shape[1], rendered.shape[1])
+
+    # Resize to same dims
+    orig_resized = cv2.resize(original, (w, h), interpolation=cv2.INTER_NEAREST)
+    rend_resized = cv2.resize(rendered, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    # Binarize
+    _, bin_orig = cv2.threshold(orig_resized, 128, 255, cv2.THRESH_BINARY)
+    _, bin_rend = cv2.threshold(rend_resized, 128, 255, cv2.THRESH_BINARY)
+
+    # Diff: green = match, red = original only, blue = rendered only
+    diff = np.zeros((h, w, 3), dtype=np.uint8)
+    diff[:] = (255, 255, 255)  # white background
+
+    both_black = (bin_orig == 0) & (bin_rend == 0)
+    orig_only = (bin_orig == 0) & (bin_rend != 0)
+    rend_only = (bin_orig != 0) & (bin_rend == 0)
+
+    diff[both_black] = (0, 0, 0)       # black = matched ink
+    diff[orig_only] = (0, 0, 255)      # red = missed (in original, not in rendered)
+    diff[rend_only] = (255, 0, 0)      # blue = false positive (in rendered, not in original)
+
+    # Convert originals to color for side-by-side
+    orig_color = cv2.cvtColor(orig_resized, cv2.COLOR_GRAY2BGR)
+    rend_color = cv2.cvtColor(rend_resized, cv2.COLOR_GRAY2BGR)
+
+    # Add labels
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(orig_color, "Original", (10, 30), font, 1.0, (0, 0, 255), 2)
+    cv2.putText(rend_color, "Rendered", (10, 30), font, 1.0, (255, 0, 0), 2)
+    cv2.putText(diff, "Diff", (10, 30), font, 1.0, (0, 128, 0), 2)
+
+    # Side by side: Original | Rendered | Diff
+    separator = np.ones((h, 3, 3), dtype=np.uint8) * 128
+    combined = np.hstack([orig_color, separator, rend_color, separator, diff])
+    return combined
+
+
+def safe_filename(name: str) -> str:
+    """Sanitize filename for output."""
+    return name.replace(" ", "_").replace("(", "").replace(")", "")
+
+
+def run_test():
+    from zpl_editor.image_processing.image_analyzer import ImageAnalyzer
+    from zpl_editor.image_processing.zpl_from_image import ZPLFromImage
+    from zpl_editor.core.zpl_renderer import render_zpl_to_png_bytes
+
+    # Find all input images
+    patterns = [os.path.join(INPUT_DIR, "*.png"),
+                os.path.join(INPUT_DIR, "*.jpg"),
+                os.path.join(INPUT_DIR, "*.bmp")]
+    input_files = []
+    for pat in patterns:
+        input_files.extend(glob.glob(pat))
+    input_files.sort()
+
+    if not input_files:
+        print(f"ERROR: No images found in {INPUT_DIR}")
+        sys.exit(1)
+
+    print(f"Found {len(input_files)} test images in {INPUT_DIR}")
+    print("=" * 70)
+
     analyzer = ImageAnalyzer()
     generator = ZPLFromImage()
+    results = []
 
-    for filename in sorted(os.listdir(input_dir)):
-        if not filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-            continue
+    for img_path in input_files:
+        label_name = os.path.splitext(os.path.basename(img_path))[0]
+        safe_name = safe_filename(label_name)
+        print(f"\n{'-' * 70}")
+        print(f"Testing: {label_name}")
+        print(f"{'-' * 70}")
 
-        name = os.path.splitext(filename)[0]
-        input_path = os.path.join(input_dir, filename)
-        zpl_path = os.path.join(zpl_dir, f"{name}.zpl")
-        img_path = os.path.join(img_dir, f"{name}.png")
-
-        print(f"\n--- {name} ---")
-
-        # Load and analyze
-        image = cv2.imread(input_path)
+        # 1. Load image
+        image = cv2.imread(img_path)
         if image is None:
-            print(f"  ERROR: Could not load {input_path}")
+            print(f"  SKIP: Cannot read {img_path}")
+            results.append((label_name, 0.0, "SKIP"))
             continue
 
         img_h, img_w = image.shape[:2]
-        dpi = 203
-        aspect = img_w / max(img_h, 1)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        print(f"  Image size: {img_w}x{img_h}")
 
-        # Determine label dimensions
-        if 0.85 < aspect < 1.15:
-            label_w, label_h = img_w, img_h
-        elif img_w > img_h * 1.2:
-            label_w, label_h = img_w, img_h
-        else:
-            label_w, label_h = 812, 1218
-
-        print(f"  Image: {img_w}x{img_h}, Label: {label_w}x{label_h}")
-
+        # 2. Analyze image
+        t0 = time.time()
         regions = analyzer.analyze(image)
-        type_counts = {}
-        for r in regions:
-            type_counts[r.region_type] = type_counts.get(r.region_type, 0) + 1
-        print(f"  Detected: {len(regions)} regions {type_counts}")
+        t_analyze = time.time() - t0
+        print(f"  Detected {len(regions)} regions in {t_analyze:.1f}s")
 
-        zpl_code = generator.generate(image, regions, label_w, label_h, dpi)
+        # 3. Generate ZPL
+        t0 = time.time()
+        zpl_code = generator.generate(image, regions,
+                                       label_width=img_w, label_height=img_h)
+        t_gen = time.time() - t0
+        print(f"  Generated ZPL ({len(zpl_code)} chars) in {t_gen:.1f}s")
 
+        # Save ZPL
+        zpl_path = os.path.join(OUT_ZPL, f"{safe_name}.zpl")
         with open(zpl_path, "w", encoding="utf-8") as f:
             f.write(zpl_code)
-        print(f"  ZPL: {len(zpl_code)} bytes")
 
-        # Render via Labelary
-        w_inches = round(label_w / dpi, 2)
-        h_inches = round(label_h / dpi, 2)
-        png_data = render_via_labelary(zpl_code, w_inches, h_inches, dpi)
-        if png_data:
-            with open(img_path, "wb") as f:
-                f.write(png_data)
+        # 4. Render ZPL locally
+        t0 = time.time()
+        png_bytes = render_zpl_to_png_bytes(zpl_code, dpi=203)
+        t_render = time.time() - t0
 
-            # Compare
-            metrics = compare_images(input_path, img_path)
-            if metrics:
-                results[name] = metrics
-                print(f"  Similarity: {metrics['similarity']:.1f}%")
-                print(f"  Missed: {metrics['missed_pct']:.1f}%, False+: {metrics['false_pos_pct']:.1f}%")
-                if metrics['worst_bands']:
-                    print(f"  Worst bands: {[(y, f'{p:.0f}%') for y, p, _ in metrics['worst_bands'][:3]]}")
-        else:
-            print(f"  ERROR: Labelary render failed")
+        if png_bytes is None:
+            print(f"  FAIL: Local render returned None")
+            results.append((label_name, 0.0, "RENDER_FAIL"))
+            continue
 
-        time.sleep(1)  # Rate limit
+        # Decode rendered PNG
+        arr = np.frombuffer(png_bytes, dtype=np.uint8)
+        rendered = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if rendered is None:
+            print(f"  FAIL: Cannot decode rendered PNG")
+            results.append((label_name, 0.0, "DECODE_FAIL"))
+            continue
 
-    return results
+        rendered_gray = cv2.cvtColor(rendered, cv2.COLOR_BGR2GRAY)
+        rh, rw = rendered_gray.shape[:2]
+        print(f"  Rendered size: {rw}x{rh} in {t_render:.1f}s")
+
+        # Save rendered image
+        render_path = os.path.join(OUT_IMG, f"{safe_name}.png")
+        cv2.imwrite(render_path, rendered)
+
+        # 5. Pixel similarity
+        similarity = pixel_similarity(gray, rendered_gray, tolerance_px=1)
+        passed = similarity >= PASS_THRESHOLD
+        status = "PASS" if passed else "FAIL"
+        results.append((label_name, similarity, status))
+
+        print(f"  Similarity: {similarity:.1f}%  [{status}]")
+
+        # 6. Create diff image
+        diff_img = create_diff_image(gray, rendered_gray)
+        diff_path = os.path.join(OUT_DIFF, f"{safe_name}_diff.png")
+        cv2.imwrite(diff_path, diff_img)
+
+    # -- Summary --------------------------------------------------------
+    print(f"\n{'=' * 70}")
+    print("SUMMARY")
+    print(f"{'=' * 70}")
+
+    all_pass = True
+    for label_name, similarity, status in results:
+        icon = "OK" if status == "PASS" else "XX"
+        print(f"  [{icon}] {label_name:30s}  {similarity:5.1f}%  {status}")
+        if status != "PASS":
+            all_pass = False
+
+    passed_count = sum(1 for _, _, s in results if s == "PASS")
+    total_count = len(results)
+    print(f"\n  {passed_count}/{total_count} passed (threshold: >= {PASS_THRESHOLD}%)")
+
+    if all_pass:
+        print("\n  ALL TESTS PASSED!")
+    else:
+        print("\n  SOME TESTS FAILED.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    results = process_and_compare(1)
-
-    print("\n" + "="*60)
-    print("ITERATION 1 RESULTS")
-    print("="*60)
-    print(f"{'Label':<15} {'Similarity':>10} {'Missed':>10} {'False+':>10}")
-    print("-" * 50)
-
-    all_pass = True
-    for name in sorted(results.keys()):
-        m = results[name]
-        status = "OK" if m['similarity'] >= 95 else "FAIL"
-        print(f"{name:<15} {m['similarity']:>9.1f}% {m['missed_pct']:>9.1f}% {m['false_pos_pct']:>9.1f}%  [{status}]")
-        if m['similarity'] < 95:
-            all_pass = False
-
-    if all_pass:
-        print("\nALL LABELS PASS (>= 95% similarity)")
-    else:
-        print(f"\nSome labels below 95% - need further fixes")
+    run_test()

@@ -1,5 +1,7 @@
 from PyQt6.QtCore import QSettings
 
+DEFAULT_TESSERACT_PATH = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
 
 class AppSettings:
     def __init__(self):
@@ -34,3 +36,11 @@ class AppSettings:
     @dark_theme.setter
     def dark_theme(self, value: bool):
         self._settings.setValue("darkTheme", value)
+
+    @property
+    def tesseract_path(self) -> str:
+        return self._settings.value("tesseractPath", DEFAULT_TESSERACT_PATH)
+
+    @tesseract_path.setter
+    def tesseract_path(self, path: str):
+        self._settings.setValue("tesseractPath", path)

@@ -1,6 +1,6 @@
 import traceback
 from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
-                              QFileDialog, QMessageBox, QInputDialog, QDockWidget,
+                              QFileDialog, QMessageBox, QDockWidget,
                               QApplication, QHBoxLayout, QTabWidget)
 from PyQt6.QtCore import Qt, QSettings, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QIcon
@@ -526,6 +526,7 @@ class MainWindow(QMainWindow):
         # Image processing signals
         self._label_list_panel.label_selected.connect(self._on_label_selected)
         self._image_analysis_view.generate_zpl_signal.connect(self._on_generate_zpl_from_image)
+        self._image_analysis_view.batch_process_signal.connect(self._batch_process_images)
 
     def _apply_theme(self):
         if self._dark_theme:
@@ -860,50 +861,30 @@ class MainWindow(QMainWindow):
         
         print(f"[MainWindow] Analysis results: {len(label_item.analysis_results)} regions")
 
-        # Use the largest reasonable dimensions between scene and label_item
-        # The scene can get resized by _parse_and_render, so label_item is the
-        # authoritative source for the physical label size.
-        label_w = label_item.label_width
-        label_h = label_item.label_height
+        # For Smart Detection mode, use image pixel dimensions as label
+        # dimensions so that detected region coordinates (in pixel space)
+        # map 1:1 to ZPL dot coordinates.  This matches test_pixel_loop.py
+        # and avoids non-uniform scaling distortion when image aspect ratio
+        # differs from the physical label aspect ratio.
+        img_h, img_w = label_item.image.shape[:2]
         dpi = label_item.dpi
-        scene_w = self._scene._label_width
-        scene_h = self._scene._label_height
 
-        # If scene is larger (user changed size via dialog), use scene dims
-        if scene_w > label_w or scene_h > label_h:
-            label_w = scene_w
-            label_h = scene_h
-
-        # Sync both stores
-        label_item.label_width = label_w
-        label_item.label_height = label_h
-        self._scene.set_label_size(label_w, label_h)
-
-        print(f"[MainWindow] Using: {label_w}x{label_h} @ {dpi} DPI, "
-              f"image: {label_item.image.shape[1]}x{label_item.image.shape[0]}")
-
-        # Ask mode
-        modes = ["Smart Detection (use detected regions)",
-                 "Full Image (convert entire image to bitmap)"]
-        mode, ok = QInputDialog.getItem(
-            self, "Generate ZPL", "Select generation mode:", modes, 0, False)
-        if not ok:
-            print("[MainWindow] User cancelled mode selection")
-            return
-        
-        print(f"[MainWindow] Selected mode: {mode}")
+        print(f"[MainWindow] Image: {img_w}x{img_h} @ {dpi} DPI")
 
         try:
             from ..image_processing.zpl_from_image import ZPLFromImage
             generator = ZPLFromImage()
 
-            if "Smart" in mode:
-                zpl = generator.generate(
-                    label_item.image, label_item.analysis_results,
-                    label_w, label_h, dpi)
-            else:
-                zpl = generator.generate_full_image(
-                    label_item.image, label_w, label_h, dpi)
+            # Always use Smart Detection with image dimensions as label dimensions
+            # (1:1 coordinate mapping) so detected regions map directly to ZPL coordinates.
+            label_w = img_w
+            label_h = img_h
+            zpl = generator.generate(
+                label_item.image, label_item.analysis_results,
+                label_w, label_h, dpi)
+
+            # Set scene to match the generated ZPL dimensions
+            self._scene.set_label_size(label_w, label_h)
 
             # Validate generated ZPL
             if not zpl or len(zpl) < 10:
@@ -939,6 +920,99 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"ZPL generation failed:\n{e}")
             import traceback
             traceback.print_exc()
+
+    def _batch_process_images(self):
+        """Batch process: select images, analyze, generate ZPL, save to folder."""
+        import os
+        import cv2
+        from PyQt6.QtWidgets import QProgressDialog
+
+        # 1. Select images
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Label Images for Batch Processing", "",
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.tiff *.gif);;All Files (*.*)")
+        if not paths:
+            return
+
+        # 2. Select output folder
+        output_dir = QFileDialog.getExistingDirectory(
+            self, "Select Output Folder for ZPL Files")
+        if not output_dir:
+            return
+
+        # 3. Get current engine settings from the analysis view
+        selected_index = self._image_analysis_view._ocr_combo.currentIndex()
+        _, selected_key = self._image_analysis_view._engine_options[selected_index]
+        enabled_engines = {selected_key} if selected_key else None
+
+        from ..utils.settings import AppSettings
+        tess_path = AppSettings().tesseract_path
+
+        # 4. Progress dialog
+        progress = QProgressDialog("Processing images...", "Cancel", 0, len(paths), self)
+        progress.setWindowTitle("Batch Processing")
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+
+        success_count = 0
+        errors = []
+
+        for i, img_path in enumerate(paths):
+            if progress.wasCanceled():
+                break
+
+            base_name = os.path.splitext(os.path.basename(img_path))[0]
+            progress.setLabelText(f"Processing: {base_name} ({i+1}/{len(paths)})")
+            progress.setValue(i)
+            QApplication.processEvents()
+
+            try:
+                # Load image
+                img = cv2.imread(img_path)
+                if img is None:
+                    errors.append(f"{base_name}: Failed to load image")
+                    continue
+
+                img_h, img_w = img.shape[:2]
+
+                # Analyze
+                from ..image_processing.image_analyzer import ImageAnalyzer
+                analyzer = ImageAnalyzer(enabled_engines=enabled_engines, tesseract_path=tess_path)
+                regions = analyzer.analyze(img)
+
+                if not regions:
+                    errors.append(f"{base_name}: No regions detected")
+                    continue
+
+                # Generate ZPL
+                from ..image_processing.zpl_from_image import ZPLFromImage
+                generator = ZPLFromImage()
+                zpl = generator.generate(img, regions, img_w, img_h, self._dpi)
+
+                if not zpl or len(zpl) < 10:
+                    errors.append(f"{base_name}: Generated ZPL is empty")
+                    continue
+
+                # Save
+                out_path = os.path.join(output_dir, f"{base_name}.zpl")
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    f.write(zpl)
+
+                success_count += 1
+
+            except Exception as e:
+                errors.append(f"{base_name}: {e}")
+
+        progress.setValue(len(paths))
+
+        # Summary
+        msg = f"Batch processing complete.\n\n{success_count}/{len(paths)} images processed successfully.\nOutput: {output_dir}"
+        if errors:
+            msg += f"\n\nErrors ({len(errors)}):\n" + "\n".join(errors[:10])
+            if len(errors) > 10:
+                msg += f"\n... and {len(errors) - 10} more"
+
+        QMessageBox.information(self, "Batch Processing", msg)
 
     def _show_about(self):
         QMessageBox.about(self, "About ZPL Visual Editor",

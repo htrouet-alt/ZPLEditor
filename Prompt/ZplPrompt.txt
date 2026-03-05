@@ -1,0 +1,165 @@
+MDCopyZPL Kargo Etiketi Üretim Prompt'u
+Amaç
+Bu prompt ile yapay zekadan her biri birbirinden farklı düzende ZPL kargo etiketleri üretmesini isteyebilirsiniz. Her etiket farklı QR kod pozisyonu, farklı barkod tipi, farklı düzen ve farklı alan dağılımına sahip olacaktır.
+
+PROMPT (Kopyala-Yapıştır)
+Sen bir ZPL etiket tasarım uzmanısın. Bana kargo etiketi ZPL kodları üreteceksin.
+
+## TEMEL KURALLAR (HER ETİKETTE ZORUNLU)
+
+### Etiket Boyutu
+- Etiket boyutu: 4x6 inch (812x1218 dot, 8 dpmm / 203 dpi)
+- ^PW812 ve ^LL1218 kullan
+- Dış çerçeve: ^FO0,0^GB812,1218,2^FS
+
+### Taşma Önleme Kuralları (KRİTİK)
+- Hiçbir eleman etiketin sınırları dışına taşmamalı
+- X ekseni: Tüm elemanlar 10-790 piksel aralığında kalmalı
+- Y ekseni: Tüm elemanlar 10-1200 piksel aralığında kalmalı
+- Barkod ve QR kod dahil tüm elemanların TOPLAM boyutunu (başlangıç + genişlik/yükseklik) hesapla
+- Elemanların birbirine GİRMEMESİ için her elemanın kapladığı alanı hesapla
+
+### Boyut Hesaplama Formülleri
+- Code 128 Barkod (^BC): Genişlik ≈ karakter_sayısı × narrow_bar × 11, Yükseklik = belirtilen yükseklik + 25 (yazı varsa)
+- QR Kod (^BQ): Boyut = magnification × (17 + 4×versiyon) + quiet_zone. Güvenli hesap: magnification=4 → max ~200px, magnification=5 → max ~250px, magnification=3 → max ~150px
+- Code 39 Barkod (^B3): Genişlik ≈ karakter_sayısı × narrow_bar × 16
+- Yazı (^A0N): Her karakter yaklaşık genişlik/2 piksel genişliğinde
+
+### Kesişme Önleme Kuralları (KRİTİK)
+- Her elemanın alanını [X_başlangıç, Y_başlangıç, X_bitiş, Y_bitiş] olarak hesapla
+- İki eleman arasında EN AZ 30 piksel boşluk bırak
+- QR kod etrafında EN AZ 40 piksel boşluk bırak (quiet zone dahil)
+- Ayırıcı çizgiler (^GB) ile bölümler arasında EN AZ 20 piksel boşluk bırak
+- Barkod ile üst/alt çizgi arasında EN AZ 30 piksel boşluk bırak
+
+### Çizgi ve Ayırıcılar
+- Yatay ayırıcı çizgiler: ^FO30,Y^GB750,2,2^FS (genişlik 750, etiketin her iki tarafından 30px boşluk)
+- Çizgiler bölümler arasına konur, elemanların üstüne binmez
+
+## ZORUNLU İÇERİK ALANLARI
+
+Her etikette şu bilgiler MUTLAKA bulunmalı:
+
+1. **Kargo Firma Adı**: Üst kısımda
+2. **Alıcı Bilgileri**: Ad-soyad, adres, ilçe, şehir, posta kodu, telefon
+3. **Satış Kanalı**: Büyük fontla
+4. **Sipariş Numarası**
+5. **Gönderi/Poşet Numarası**
+6. **Barkod**: Gönderi numarasını içeren (Code 128 veya Code 39)
+7. **QR Kod**: Takip bilgisi içeren
+8. **Ek Bilgi Alanı**: Tarih, ağırlık, koli adedi vb.
+
+## FARKLILAŞTIRMA KURALLARI
+
+Her etiket aşağıdaki parametrelerde rastgele farklılık göstermeli:
+
+### 1. QR Kod Pozisyonu (8 olası konum)
+- Sol üst köşe (X:30-250, Y:30-250)
+- Sağ üst köşe (X:550-700, Y:30-250)
+- Sol alt köşe (X:30-250, Y:900-1100)
+- Sağ alt köşe (X:550-700, Y:900-1100)
+- Orta sol (X:30-250, Y:500-700)
+- Orta sağ (X:550-700, Y:500-700)
+- Alt orta (X:280-420, Y:900-1100)
+- Üst orta (X:280-420, Y:30-250)
+
+### 2. QR Kod Boyutu (magnification)
+- Küçük: magnification=3 (~120px)
+- Orta: magnification=4 (~170px)
+- Büyük: magnification=5 (~220px)
+
+### 3. Barkod Tipi ve Pozisyonu
+- Code 128 yatay (^BC): üst, orta veya alt bölgede
+- Code 39 yatay (^B3): üst, orta veya alt bölgede
+- Barkod yüksekliği: 80-150 arası değişken
+- Barkod narrow bar: 2 veya 3
+
+### 4. Düzen Varyasyonları
+- **Düzen A**: Bilgiler üstte, barkod ortada, QR altta
+- **Düzen B**: QR solda bilgilerin yanında, barkod altta
+- **Düzen C**: QR sağ üstte, barkod ortada, bilgiler solda
+- **Düzen D**: Bilgiler üstte, QR ve barkod yan yana altta
+- **Düzen E**: QR büyük ortada, bilgiler üstte ve altta
+- **Düzen F**: İki sütunlu: sol sütun bilgiler, sağ sütun QR+barkod
+- **Düzen G**: Barkod üstte, bilgiler ortada, QR altta
+- **Düzen H**: Kompakt üst bilgi, büyük barkod ortada, küçük QR köşede
+
+### 5. Font Boyut Varyasyonları
+- Kargo firma adı: 24-36 arası
+- Alıcı adı: 20-28 arası
+- Adres: 16-22 arası
+- Satış kanalı: 32-44 arası
+- Diğer bilgiler: 16-22 arası
+
+### 6. İçerik Varyasyonları
+- Farklı kargo firmaları: Yurtiçi Kargo, Aras Kargo, MNG Kargo, PTT Kargo, Sürat Kargo, HepsiJet, Trendyol Express
+- Farklı satış kanalları: N11, Trendyol, Hepsiburada, Amazon, GittiGidiyor, Çiçeksepeti
+- Farklı şehirler ve adresler
+- Farklı gönderi numaraları (13-20 haneli rastgele sayılar)
+- Farklı sipariş numaraları
+
+## ÜRETİM TALİMATI
+
+Bana [ADET] adet ZPL etiket kodu üret. Her etiket için:
+
+1. Önce hangi düzeni (A-H), QR pozisyonunu, barkod tipini ve boyutları seçtiğini kısaca belirt
+2. Her elemanın kapladığı alanı [X1,Y1,X2,Y2] olarak hesapla
+3. Elemanlar arası mesafeyi kontrol et (min 30px)
+4. ZPL kodunu ^XA ile başlat, ^XZ ile bitir
+5. Her etiketi ayrı bir kod bloğu olarak ver
+
+## DOĞRULAMA KONTROL LİSTESİ (HER ETİKET İÇİN)
+
+Kodu vermeden önce şunları kontrol et:
+- [ ] Tüm elemanlar 812x1218 sınırları içinde mi?
+- [ ] QR kod + quiet zone sınır dışına taşmıyor mu?
+- [ ] Barkod + yazısı sınır dışına taşmıyor mu?
+- [ ] Hiçbir eleman başka bir elemanla kesişmiyor mu?
+- [ ] Çizgiler elemanların üstünden geçmiyor mu?
+- [ ] QR kod etrafında en az 40px boşluk var mı?
+- [ ] Barkod etrafında en az 30px boşluk var mı?
+- [ ] Tüm zorunlu alanlar mevcut mu?
+
+## ÖRNEK KULLANIM
+
+"Bana 5 adet farklı düzende ZPL kargo etiketi üret" dediğimde:
+- 5 etiketin her biri farklı düzende (A-H arası)
+- Her birinde QR kod farklı konumda
+- Her birinde farklı barkod tipi/boyutu
+- Her birinde farklı kargo firması ve satış kanalı
+- Her birinde farklı alıcı bilgileri
+- Hepsi Labelary (labelary.com/viewer.html) üzerinde 4x6 inch, 8 dpmm ile test edilebilir
+
+KULLANIM REHBERİ
+Basit Kullanım
+Yukarıdaki prompt'u yapay zekaya yapıştırın, sonra şunu yazın:
+Bana 5 adet farklı düzende ZPL kargo etiketi üret.
+Spesifik İstekler
+Bana 10 adet etiket üret. Hepsinde QR kod farklı köşelerde olsun. 
+Barkod tipleri karışık olsun. Kargo firması hep Yurtiçi Kargo olsun.
+Test Odaklı
+Bana 20 adet etiket üret. QR kodların boyutları 3-5 magnification arasında 
+değişsin. Her etikette QR kodun farklı yerde olduğundan emin ol. 
+Amacım QR okuyucumu test etmek.
+Stres Testi
+Bana 10 adet etiket üret. QR kodlar mümkün olduğunca büyük (magnification=5) 
+olsun ama kesinlikle sınırlara taşmasın ve diğer elemanlarla kesişmesin. 
+Barkodlar da maksimum yükseklikte (150px) olsun.
+
+TEST YÖNTEMI
+Üretilen ZPL kodlarını test etmek için:
+
+Labelary Online Viewer: labelary.com/viewer.html
+
+Print Density: 8 dpmm (203 dpi)
+Label Size: 4 x 6 inches
+Kodu yapıştır → Redraw
+
+
+Kontrol Edilecekler:
+
+Etiket sınırları dışına taşma var mı?
+QR kod okunabiliyor mu?
+Barkod taranabiliyor mu?
+Yazılar okunaklı mı?
+Elemanlar üst üste biniyor mu?

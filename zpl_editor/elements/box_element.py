@@ -39,28 +39,31 @@ class BoxElement(BaseElement):
         h = self._dot_height
 
         if self._is_line():
-            painter.setPen(QPen(color, thickness))
-            # Use property values for direction check (dot_height may be clamped by _min_size)
-            prop_h = self._properties.get("height", h)
+            # Use fillRect for pixel-perfect line rendering (avoids QPen centering offsets).
+            # Use property values for actual ZPL size (dot_width/dot_height may be clamped by _min_size).
             prop_w = self._properties.get("width", w)
-            if prop_h <= thickness:
-                painter.drawLine(0, h // 2, w, h // 2)
-            else:
-                painter.drawLine(w // 2, 0, w // 2, h)
-        else:
+            prop_h = self._properties.get("height", h)
+            painter.fillRect(QRectF(0, 0, prop_w, prop_h), color)
+        elif thickness >= min(w, h) / 2:
+            # Filled box
+            painter.fillRect(QRectF(0, 0, w, h), color)
+        elif rounding > 0:
+            # Rounded box - use QPen
             pen = QPen(color, thickness)
             painter.setPen(pen)
-            if thickness >= min(w, h) / 2:
-                painter.setBrush(QBrush(color))
-            else:
-                painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             half_t = thickness / 2
             rect = QRectF(half_t, half_t, w - thickness, h - thickness)
-            if rounding > 0:
-                radius = rounding * min(w, h) / 16
-                painter.drawRoundedRect(rect, radius, radius)
-            else:
-                painter.drawRect(rect)
+            radius = rounding * min(w, h) / 16
+            painter.drawRoundedRect(rect, radius, radius)
+        else:
+            # Non-filled, non-rounded box: draw each border edge with fillRect
+            # for pixel-perfect rendering (avoids QPen centering issues)
+            t = thickness
+            painter.fillRect(QRectF(0, 0, w, t), color)         # top
+            painter.fillRect(QRectF(0, h - t, w, t), color)     # bottom
+            painter.fillRect(QRectF(0, 0, t, h), color)         # left
+            painter.fillRect(QRectF(w - t, 0, t, h), color)     # right
 
     def get_zpl_element(self):
         elem = super().get_zpl_element()

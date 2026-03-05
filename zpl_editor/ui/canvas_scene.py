@@ -106,9 +106,11 @@ class CanvasScene(QGraphicsScene):
             fw = props.get("font_width", model.settings.default_font_width)
             orientation = props.get("orientation", "N")
             data = props.get("data", "")
-            # ^FT uses baseline (bottom-left) as Y origin, adjust to top-left
+            # ^FT uses baseline (bottom-left) as Y origin, adjust to top-left.
+            # Ascender is typically ~80% of the full cell height.
             if zpl_elem.use_ft:
-                y = max(0, y - fh)
+                ascender = int(fh * 0.80)
+                y = max(0, y - ascender)
             elem = TextElement(x, y, data, font, fh, fw, orientation)
             elem._properties = dict(props)
             return elem

@@ -6,6 +6,7 @@ and RapidOCR (ONNX Runtime) for text recognition.
 import cv2
 import numpy as np
 import traceback
+import importlib.util
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -28,48 +29,66 @@ class ImageAnalyzer:
     _ocr_reader = None  # Singleton: RapidOCR shared across instances
     _easyocr_reader = None  # Singleton: EasyOCR shared across instances
 
-    def __init__(self):
-        self._has_pyzbar = False
-        self._has_ocr = False
-        self._has_easyocr = False
-        self._has_tesseract = False
-        try:
-            from pyzbar import pyzbar
-            self._has_pyzbar = True
-        except ImportError:
-            pass
-        try:
-            from rapidocr_onnxruntime import RapidOCR
-            self._has_ocr = True
-        except ImportError:
-            pass
-        try:
-            import easyocr
-            self._has_easyocr = True
-        except ImportError:
-            pass
+    def __init__(self, enabled_engines=None, tesseract_path=None):
+        """Initialize image analyzer.
+
+        Args:
+            enabled_engines: Optional set of engine names to enable.
+                Valid values: {"rapidocr", "easyocr", "tesseract"}.
+                If None, auto-detect all available engines (default).
+                If provided, only listed engines that are actually installed
+                will be enabled.
+            tesseract_path: Path to tesseract executable. If None, uses default.
+        """
+        from ..utils.settings import DEFAULT_TESSERACT_PATH
+        self._tesseract_path = tesseract_path or DEFAULT_TESSERACT_PATH
+        self._has_pyzbar = importlib.util.find_spec("pyzbar") is not None
+
+        # Auto-detect availability (lightweight check via find_spec).
+        # Actual engine init is lazy -- if DLLs fail at runtime,
+        # the singleton pattern handles it gracefully and falls through.
+        rapidocr_available = importlib.util.find_spec("rapidocr_onnxruntime") is not None
+        easyocr_available = importlib.util.find_spec("easyocr") is not None
+        tesseract_available = False
         try:
             import pytesseract
-            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            pytesseract.pytesseract.tesseract_cmd = self._tesseract_path
             pytesseract.get_tesseract_version()
-            self._has_tesseract = True
+            tesseract_available = True
         except Exception:
             pass
 
+        # Apply engine filter if provided
+        if enabled_engines is None:
+            self._has_ocr = rapidocr_available
+            self._has_easyocr = easyocr_available
+            self._has_tesseract = tesseract_available
+        else:
+            self._has_ocr = rapidocr_available and "rapidocr" in enabled_engines
+            self._has_easyocr = easyocr_available and "easyocr" in enabled_engines
+            self._has_tesseract = tesseract_available and "tesseract" in enabled_engines
+
     @classmethod
     def _get_ocr_reader(cls):
-        """Get or create the shared RapidOCR engine."""
+        """Get or create the shared RapidOCR engine. Returns None on failure."""
+        if cls._ocr_reader is False:
+            return None
         if cls._ocr_reader is None:
             try:
                 from rapidocr_onnxruntime import RapidOCR
                 cls._ocr_reader = RapidOCR()
             except Exception as e:
                 print(f"[ImageAnalyzer] Failed to init RapidOCR: {e}")
+                cls._ocr_reader = False
+                return None
         return cls._ocr_reader
 
     @classmethod
     def _get_easyocr_reader(cls):
-        """Get or create the shared EasyOCR engine (downloads models on first use)."""
+        """Get or create the shared EasyOCR engine (downloads models on first use).
+        Returns None on failure."""
+        if cls._easyocr_reader is False:
+            return None
         if cls._easyocr_reader is None:
             try:
                 import easyocr
@@ -77,7 +96,139 @@ class ImageAnalyzer:
                 print("[ImageAnalyzer] EasyOCR initialized")
             except Exception as e:
                 print(f"[ImageAnalyzer] Failed to init EasyOCR: {e}")
+                cls._easyocr_reader = False
+                return None
         return cls._easyocr_reader
+
+    @staticmethod
+    def get_available_engines(tesseract_path=None):
+        """Return a dict of engine name -> is_available (bool).
+        Uses lightweight find_spec check. Actual init is lazy at runtime."""
+        from ..utils.settings import DEFAULT_TESSERACT_PATH
+        tess_path = tesseract_path or DEFAULT_TESSERACT_PATH
+        available = {
+            "rapidocr": importlib.util.find_spec("rapidocr_onnxruntime") is not None,
+            "easyocr": importlib.util.find_spec("easyocr") is not None,
+            "tesseract": False,
+        }
+        try:
+            import pytesseract
+            pytesseract.pytesseract.tesseract_cmd = tess_path
+            pytesseract.get_tesseract_version()
+            available["tesseract"] = True
+        except Exception:
+            pass
+        return available
+
+    def _ocr_crop_text(self, crop: np.ndarray) -> str:
+        """Run OCR on a preprocessed grayscale crop.
+        Tries RapidOCR → EasyOCR → Tesseract (in that order)."""
+        best_text = ""
+
+        # 1. RapidOCR (fastest, pure pip)
+        if self._has_ocr:
+            engine = self._get_ocr_reader()
+            if engine is not None:
+                try:
+                    result, _ = engine(crop)
+                    if result:
+                        texts = [t.strip() for _, t, c in result if c > 0.3 and t.strip()]
+                        if texts:
+                            best_text = " ".join(texts)
+                except Exception:
+                    pass
+
+        # 2. EasyOCR (pure pip, needs PyTorch)
+        if not best_text and self._has_easyocr:
+            reader = self._get_easyocr_reader()
+            if reader is not None:
+                try:
+                    results = reader.readtext(crop)
+                    if results:
+                        texts = [t.strip() for _, t, c in results if c > 0.3 and t.strip()]
+                        if texts:
+                            best_text = " ".join(texts)
+                except Exception:
+                    pass
+
+        # 3. Tesseract (requires system install, fallback)
+        if not best_text and self._has_tesseract:
+            try:
+                import pytesseract
+                pytesseract.pytesseract.tesseract_cmd = self._tesseract_path
+                _, binary = cv2.threshold(crop, 0, 255,
+                                          cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                for psm in ['7', '6']:
+                    try:
+                        text = pytesseract.image_to_string(
+                            binary, config=f'--oem 3 --psm {psm}'
+                        ).strip()
+                        if text and len(text) > len(best_text):
+                            best_text = text
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        return best_text.replace('\n', ' ').strip()
+
+    def _ocr_results_to_word_blocks(self, ocr_results, scale: float, img_h: int) -> list:
+        """Convert RapidOCR/EasyOCR line-level results to word-level blocks.
+        OCR engines return line-level bboxes; this splits multi-word results
+        into individual word blocks with proportionally allocated widths.
+
+        ocr_results: list of (bbox, text, confidence) tuples
+          - RapidOCR bbox: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]]
+          - EasyOCR bbox: same format
+        """
+        blocks = []
+        for item in ocr_results:
+            bbox, text, conf = item
+            text = text.strip()
+            if not text or conf < 0.3:
+                continue
+
+            # Extract bounding box (handle both list-of-lists and numpy arrays)
+            try:
+                pts = np.array(bbox)
+                x_min = int(pts[:, 0].min() / scale)
+                x_max = int(pts[:, 0].max() / scale)
+                y_min = int(pts[:, 1].min() / scale)
+                y_max = int(pts[:, 1].max() / scale)
+            except Exception:
+                continue
+
+            w_total = x_max - x_min
+            h = y_max - y_min
+            if w_total < 3 or h < 3:
+                continue
+
+            # Split multi-word results into individual word blocks
+            words = text.split()
+            if len(words) <= 1:
+                if self._is_noise_text(text, w_total, h, img_h):
+                    continue
+                blocks.append({
+                    'text': text, 'x': x_min, 'y': y_min,
+                    'w': w_total, 'h': h, 'conf': int(conf * 100)
+                })
+            else:
+                total_chars = sum(len(w) for w in words)
+                if total_chars == 0:
+                    continue
+                x_cursor = x_min
+                for word in words:
+                    word_w = max(1, int(w_total * len(word) / total_chars))
+                    if self._is_noise_text(word, word_w, h, img_h):
+                        x_cursor += word_w
+                        continue
+                    blocks.append({
+                        'text': word, 'x': x_cursor, 'y': y_min,
+                        'w': word_w, 'h': h, 'conf': int(conf * 100)
+                    })
+                    x_cursor += word_w
+
+        return blocks
 
     def analyze(self, image: np.ndarray) -> List[DetectedRegion]:
         """Analyze image and return detected regions.
@@ -100,6 +251,7 @@ class ImageAnalyzer:
 
         # 1. Detect barcodes and QR codes FIRST
         bc_regions = self._detect_barcodes(image, gray)
+        bc_regions = self._deduplicate_barcodes(bc_regions)
         # Try to decode any barcode regions that have no data
         for bc in bc_regions:
             if not bc.data and bc.region_type == "barcode":
@@ -107,7 +259,9 @@ class ImageAnalyzer:
         # Measure module width for 1D barcodes from the actual bar pattern
         for bc in bc_regions:
             if bc.region_type == "barcode" and bc.data:
-                mw = self._measure_module_width(gray, bc)
+                orientation = self._infer_barcode_orientation(gray, bc)
+                bc.extra["zpl_orientation"] = orientation
+                mw = self._measure_module_width(gray, bc, orientation)
                 if mw > 0:
                     bc.extra["module_width"] = mw
         results.extend(bc_regions)
@@ -121,6 +275,7 @@ class ImageAnalyzer:
 
         # 3. Detect lines and boxes (exclude barcode areas)
         line_regions = self._detect_lines(gray, bc_regions)
+        line_regions = self._merge_collinear_lines(line_regions, img_w, img_h)
         box_regions = self._detect_boxes(gray, bc_regions)
         # Remove false-positive boxes that are actually text block contours
         box_regions = self._remove_text_formed_boxes(box_regions, text_regions)
@@ -128,6 +283,7 @@ class ImageAnalyzer:
         # then remove lines that are edges of real boxes
         box_regions = self._remove_line_formed_boxes(box_regions, line_regions)
         line_regions = self._remove_box_edge_lines(line_regions, box_regions)
+        line_regions = self._merge_collinear_lines(line_regions, img_w, img_h)
         # Convert boxes with internal graphics (logos, icons) to image regions
         box_regions, graphic_boxes = self._separate_graphic_boxes(gray, box_regions)
         # Post-process: convert clusters of vlines into barcode regions
@@ -143,12 +299,12 @@ class ImageAnalyzer:
             if density > 0.70:
                 continue  # Too dense for a barcode
             filtered_extra_bc.append(b)
-        extra_barcodes = filtered_extra_bc
+        extra_barcodes = self._deduplicate_barcodes(filtered_extra_bc)
         # Try to decode the vline-cluster barcodes
         for bc in extra_barcodes:
             self._try_decode_barcode_region(image, gray, bc)
         results.extend(extra_barcodes)
-        bc_regions.extend(extra_barcodes)
+        bc_regions = self._deduplicate_barcodes(bc_regions + extra_barcodes)
         results.extend(line_regions)
         results.extend(box_regions)
         results.extend(graphic_boxes)
@@ -187,6 +343,12 @@ class ImageAnalyzer:
 
         # 4. Detect image/graphic regions (exclude everything found so far)
         img_regions = self._detect_images(gray, results)
+        # 4a. Detect colored regions (logos, icons) that binary detection misses
+        if len(image.shape) == 3:
+            color_regions = self._detect_colored_regions(image, results + img_regions)
+            if color_regions:
+                img_regions.extend(color_regions)
+                print(f"[ImageAnalyzer] Colored regions: {len(color_regions)}")
         # Try OCR on image regions - large bold text (e.g. "CA") may be classified as images
         text_from_images, img_regions = self._ocr_image_regions(gray, img_regions)
         results.extend(text_from_images)
@@ -212,6 +374,10 @@ class ImageAnalyzer:
                 print(f"[ImageAnalyzer] Removed {len(to_remove)} regions inside reverse banners")
             results.extend(reverse_regions)
             print(f"[ImageAnalyzer] Reverse-video banners: {len(reverse_regions)}")
+
+        # 6. Per-region text color detection: check if each text region
+        #    has light text on a dark background (not just full-width banners).
+        self._detect_text_colors(gray, results)
 
         return results
 
@@ -239,7 +405,7 @@ class ImageAnalyzer:
             if exclude:
                 mask = np.ones_like(binary) * 255
                 for r in exclude:
-                    pad = 10
+                    pad = 4
                     cv2.rectangle(mask, (r.x - pad, r.y - pad),
                                   (r.x + r.width + pad, r.y + r.height + pad), 0, -1)
                 binary = cv2.bitwise_and(binary, mask)
@@ -283,6 +449,131 @@ class ImageAnalyzer:
         except Exception as e:
             print(f"[ImageAnalyzer] Line detection error: {e}")
         return results
+
+    def _merge_collinear_lines(self, lines: List[DetectedRegion], img_w: int, img_h: int) -> List[DetectedRegion]:
+        """Merge nearby collinear line segments to recover fragmented frame/grid edges."""
+        if not lines:
+            return lines
+
+        hlines = [l for l in lines if l.region_type == "hline"]
+        vlines = [l for l in lines if l.region_type == "vline"]
+        others = [l for l in lines if l.region_type not in ("hline", "vline")]
+
+        axis_tol = max(2, int(min(img_w, img_h) * 0.003))
+        gap_h = max(8, int(img_w * 0.02))
+        gap_v = max(8, int(img_h * 0.02))
+
+        def merge_horizontal(candidates: List[DetectedRegion]) -> List[DetectedRegion]:
+            if not candidates:
+                return []
+            buckets = []
+            for ln in sorted(candidates, key=lambda r: (r.y, r.x)):
+                placed = False
+                for bucket in buckets:
+                    if abs(ln.y - bucket["axis"]) <= axis_tol:
+                        bucket["items"].append(ln)
+                        bucket["axis_vals"].append(ln.y)
+                        bucket["axis"] = int(np.median(bucket["axis_vals"]))
+                        placed = True
+                        break
+                if not placed:
+                    buckets.append({"axis": ln.y, "axis_vals": [ln.y], "items": [ln]})
+
+            merged = []
+            for bucket in buckets:
+                parts = sorted(bucket["items"], key=lambda r: r.x)
+                cur = parts[0]
+                cur_start = cur.x
+                cur_end = cur.x + cur.width
+                cur_h = cur.height
+                cur_conf = cur.confidence
+                for part in parts[1:]:
+                    part_start = part.x
+                    part_end = part.x + part.width
+                    long_span = ((cur_end - cur_start) > img_w * 0.2) or (part.width > img_w * 0.2)
+                    allowed_gap = max(gap_h, int(img_w * 0.18)) if long_span else gap_h
+                    if part_start <= cur_end + allowed_gap:
+                        cur_end = max(cur_end, part_end)
+                        cur_h = max(cur_h, part.height)
+                        cur_conf = max(cur_conf, part.confidence)
+                    else:
+                        merged.append(DetectedRegion(
+                            region_type="hline",
+                            x=int(cur_start), y=int(bucket["axis"]),
+                            width=int(cur_end - cur_start), height=int(max(1, cur_h)),
+                            confidence=cur_conf,
+                            extra={"thickness": int(max(1, cur_h))}
+                        ))
+                        cur_start = part_start
+                        cur_end = part_end
+                        cur_h = part.height
+                        cur_conf = part.confidence
+                merged.append(DetectedRegion(
+                    region_type="hline",
+                    x=int(cur_start), y=int(bucket["axis"]),
+                    width=int(cur_end - cur_start), height=int(max(1, cur_h)),
+                    confidence=cur_conf,
+                    extra={"thickness": int(max(1, cur_h))}
+                ))
+            return merged
+
+        def merge_vertical(candidates: List[DetectedRegion]) -> List[DetectedRegion]:
+            if not candidates:
+                return []
+            buckets = []
+            for ln in sorted(candidates, key=lambda r: (r.x, r.y)):
+                placed = False
+                for bucket in buckets:
+                    if abs(ln.x - bucket["axis"]) <= axis_tol:
+                        bucket["items"].append(ln)
+                        bucket["axis_vals"].append(ln.x)
+                        bucket["axis"] = int(np.median(bucket["axis_vals"]))
+                        placed = True
+                        break
+                if not placed:
+                    buckets.append({"axis": ln.x, "axis_vals": [ln.x], "items": [ln]})
+
+            merged = []
+            for bucket in buckets:
+                parts = sorted(bucket["items"], key=lambda r: r.y)
+                cur = parts[0]
+                cur_start = cur.y
+                cur_end = cur.y + cur.height
+                cur_w = cur.width
+                cur_conf = cur.confidence
+                for part in parts[1:]:
+                    part_start = part.y
+                    part_end = part.y + part.height
+                    long_span = ((cur_end - cur_start) > img_h * 0.2) or (part.height > img_h * 0.2)
+                    allowed_gap = max(gap_v, int(img_h * 0.22)) if long_span else gap_v
+                    if part_start <= cur_end + allowed_gap:
+                        cur_end = max(cur_end, part_end)
+                        cur_w = max(cur_w, part.width)
+                        cur_conf = max(cur_conf, part.confidence)
+                    else:
+                        merged.append(DetectedRegion(
+                            region_type="vline",
+                            x=int(bucket["axis"]), y=int(cur_start),
+                            width=int(max(1, cur_w)), height=int(cur_end - cur_start),
+                            confidence=cur_conf,
+                            extra={"thickness": int(max(1, cur_w))}
+                        ))
+                        cur_start = part_start
+                        cur_end = part_end
+                        cur_w = part.width
+                        cur_conf = part.confidence
+                merged.append(DetectedRegion(
+                    region_type="vline",
+                    x=int(bucket["axis"]), y=int(cur_start),
+                    width=int(max(1, cur_w)), height=int(cur_end - cur_start),
+                    confidence=cur_conf,
+                    extra={"thickness": int(max(1, cur_w))}
+                ))
+            return merged
+
+        merged_h = merge_horizontal(hlines)
+        merged_v = merge_vertical(vlines)
+        return merged_h + merged_v + others
 
     # ── Box detection ────────────────────────────────────────────────
 
@@ -446,7 +737,56 @@ class ImageAnalyzer:
             if not self._overlaps_any(h, results):
                 results.append(h)
 
-        return results
+        return self._deduplicate_barcodes(results)
+
+    def _deduplicate_barcodes(self, regions: List[DetectedRegion]) -> List[DetectedRegion]:
+        """Remove duplicate barcode/QR detections coming from multiple detectors."""
+        if len(regions) <= 1:
+            return regions
+
+        def score(r: DetectedRegion) -> tuple:
+            area = max(r.width * r.height, 1)
+            has_data = 1 if (r.data and r.data.strip()) else 0
+            known_type = 1 if (r.barcode_type and r.barcode_type != "unknown") else 0
+            return (has_data, known_type, r.confidence, area)
+
+        ordered = sorted(regions, key=score, reverse=True)
+        keep: List[DetectedRegion] = []
+
+        for cand in ordered:
+            duplicate = False
+            cand_area = max(cand.width * cand.height, 1)
+            for ex in keep:
+                overlap = self._overlap_area(cand, ex)
+                if overlap <= 0:
+                    continue
+                ex_area = max(ex.width * ex.height, 1)
+                union = cand_area + ex_area - overlap
+                iou = overlap / max(union, 1)
+                overlap_small = overlap / min(cand_area, ex_area)
+
+                same_family = (
+                    cand.region_type == ex.region_type or
+                    {cand.region_type, ex.region_type} <= {"barcode", "qrcode"}
+                )
+                same_payload = bool(cand.data and ex.data and cand.data == ex.data)
+
+                if same_family and (iou > 0.55 or overlap_small > 0.75):
+                    duplicate = True
+                    break
+                if same_payload and overlap_small > 0.35:
+                    duplicate = True
+                    break
+                if (cand.region_type == ex.region_type == "barcode" and
+                        overlap_small > 0.5 and
+                        ((not cand.data) or (not ex.data))):
+                    duplicate = True
+                    break
+
+            if not duplicate:
+                keep.append(cand)
+
+        return keep
 
     def _detect_with_pyzbar(self, image: np.ndarray, gray: np.ndarray) -> List[DetectedRegion]:
         """Detect barcodes using pyzbar library - tries multiple preprocessing approaches."""
@@ -526,9 +866,11 @@ class ImageAnalyzer:
         if bc_type == 'QRCODE':
             return DetectedRegion("qrcode", x=x, y=y, width=w, height=h,
                                   data=data, barcode_type="qrcode", confidence=1.0)
-        return DetectedRegion("barcode", x=x, y=y, width=w, height=h,
+        region = DetectedRegion("barcode", x=x, y=y, width=w, height=h,
                               data=data, barcode_type=self._pyzbar_type_to_zpl(bc_type),
                               confidence=1.0)
+        region.extra["pyzbar_detected"] = True
+        return region
 
     def _detect_qr_opencv(self, gray: np.ndarray) -> List[DetectedRegion]:
         """Detect QR codes using OpenCV's built-in detector with multiple preprocessing."""
@@ -645,17 +987,22 @@ class ImageAnalyzer:
 
     def _detect_text(self, image: np.ndarray, gray: np.ndarray,
                      existing: List[DetectedRegion]) -> List[DetectedRegion]:
-        """Detect text using Tesseract word-level OCR with row/column grouping.
-        Based on qwen.py approach for better position accuracy.
-        Falls back to multi-engine OCR + morphology if Tesseract unavailable."""
+        """Detect text using OCR engines.
+        Tesseract: uses word-level grouped detection (best accuracy).
+        RapidOCR/EasyOCR: uses their native detection + morphology fallback.
+        Falls back to multi-engine OCR + morphology if primary gives < 2 results."""
         img_h, img_w = gray.shape[:2]
 
-        # Primary: Tesseract PSM 6 word-level + row/column grouping
         text_regions = []
+
+        # Tesseract has word-level image_to_data() which gives best results
+        # with the grouped detection algorithm. RapidOCR/EasyOCR return line-level
+        # results, so they work better through _detect_text_fallback path which
+        # uses their native detection parsers (_detect_text_rapidocr/_detect_text_easyocr).
         if self._has_tesseract:
             text_regions = self._detect_text_grouped(gray, existing)
 
-        # Fallback: multi-engine OCR + morphology if Tesseract gave < 2 results
+        # Fallback: multi-engine OCR + morphology if grouped detection gave < 2 results
         if len(text_regions) < 2:
             fallback = self._detect_text_fallback(image, gray, existing)
             for r in fallback:
@@ -679,7 +1026,7 @@ class ImageAnalyzer:
 
         # Step 1: Get word-level blocks from Tesseract
         word_blocks = self._get_word_blocks(gray)
-        print(f"[ImageAnalyzer] Tesseract word blocks: {len(word_blocks)}")
+        print(f"[ImageAnalyzer] OCR word blocks: {len(word_blocks)}")
 
         if not word_blocks:
             return []
@@ -835,45 +1182,72 @@ class ImageAnalyzer:
             return None
 
     def _get_word_blocks(self, gray: np.ndarray) -> list:
-        """Get word-level text blocks from Tesseract PSM 6.
+        """Get word-level text blocks using available OCR engines.
+        Priority: RapidOCR → EasyOCR → Tesseract.
         Scales image 2x for better OCR accuracy on small text."""
-        try:
-            import pytesseract
-            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        scale = 2.0
+        big = cv2.resize(gray, None, fx=scale, fy=scale,
+                         interpolation=cv2.INTER_CUBIC)
+        img_h = gray.shape[0]
+        blocks = []
 
-            # Scale up 2x for better character recognition (0→6, 3→8 fixes)
-            scale = 2.0
-            big = cv2.resize(gray, None, fx=scale, fy=scale,
-                             interpolation=cv2.INTER_CUBIC)
+        # 1. Try RapidOCR first (fastest, pure pip)
+        if self._has_ocr:
+            engine = self._get_ocr_reader()
+            if engine is not None:
+                try:
+                    result, _ = engine(big)
+                    if result:
+                        blocks = self._ocr_results_to_word_blocks(result, scale, img_h)
+                        if blocks:
+                            return blocks
+                except Exception as e:
+                    print(f"[ImageAnalyzer] RapidOCR word blocks error: {e}")
 
-            custom_config = r'--oem 3 --psm 6'
-            data = pytesseract.image_to_data(
-                big, output_type=pytesseract.Output.DICT, config=custom_config
-            )
+        # 2. Try EasyOCR (pure pip)
+        if self._has_easyocr:
+            reader = self._get_easyocr_reader()
+            if reader is not None:
+                try:
+                    results = reader.readtext(big)
+                    if results:
+                        blocks = self._ocr_results_to_word_blocks(results, scale, img_h)
+                        if blocks:
+                            return blocks
+                except Exception as e:
+                    print(f"[ImageAnalyzer] EasyOCR word blocks error: {e}")
 
-            blocks = []
-            img_h = gray.shape[0]
-            for i in range(len(data['text'])):
-                text = data['text'][i].strip()
-                conf = int(data['conf'][i])
-                if text and conf > 30:
-                    # Scale coordinates back to original image space
-                    x = int(data['left'][i] / scale)
-                    y = int(data['top'][i] / scale)
-                    w = int(data['width'][i] / scale)
-                    h = int(data['height'][i] / scale)
-                    if w < 3 or h < 3:
-                        continue
-                    # Skip noise text
-                    if self._is_noise_text(text, w, h, img_h):
-                        continue
-                    blocks.append({
-                        'text': text, 'x': x, 'y': y, 'w': w, 'h': h, 'conf': conf
-                    })
-            return blocks
-        except Exception as e:
-            print(f"[ImageAnalyzer] Tesseract word blocks error: {e}")
-            return []
+        # 3. Tesseract fallback (requires system install)
+        if self._has_tesseract:
+            try:
+                import pytesseract
+                pytesseract.pytesseract.tesseract_cmd = self._tesseract_path
+
+                custom_config = r'--oem 3 --psm 6'
+                data = pytesseract.image_to_data(
+                    big, output_type=pytesseract.Output.DICT, config=custom_config
+                )
+
+                for i in range(len(data['text'])):
+                    text = data['text'][i].strip()
+                    conf = int(data['conf'][i])
+                    if text and conf > 30:
+                        x = int(data['left'][i] / scale)
+                        y = int(data['top'][i] / scale)
+                        w = int(data['width'][i] / scale)
+                        h = int(data['height'][i] / scale)
+                        if w < 3 or h < 3:
+                            continue
+                        if self._is_noise_text(text, w, h, img_h):
+                            continue
+                        blocks.append({
+                            'text': text, 'x': x, 'y': y, 'w': w, 'h': h, 'conf': conf
+                        })
+                return blocks
+            except Exception as e:
+                print(f"[ImageAnalyzer] Tesseract word blocks error: {e}")
+
+        return blocks
 
     @staticmethod
     def _cluster_values(values, threshold=20):
@@ -930,19 +1304,27 @@ class ImageAnalyzer:
     def _detect_text_ocr(self, image: np.ndarray, gray: np.ndarray,
                          existing: List[DetectedRegion]) -> List[DetectedRegion]:
         """Detect text using all available OCR engines and combine results.
-        RapidOCR + Tesseract always run; EasyOCR only if results are sparse."""
+        Priority: RapidOCR → EasyOCR → Tesseract."""
         img_h, img_w = gray.shape[:2]
 
-        # Step 1: Run RapidOCR (fastest)
+        # Step 1: Run RapidOCR (fastest, pure pip)
         rapid_results = self._detect_text_rapidocr(image, gray, existing)
         combined = list(rapid_results)
 
-        # Step 2: Always run Tesseract too (catches anti-aliased text RapidOCR misses)
-        if self._has_tesseract:
+        # Step 2: EasyOCR (catches anti-aliased text RapidOCR misses)
+        if self._has_easyocr and len(combined) < 3:
+            easy_results = self._detect_text_easyocr(image, gray, existing)
+            for er in easy_results:
+                if not self._overlaps_any(er, combined):
+                    combined.append(er)
+            print(f"[ImageAnalyzer] EasyOCR found {len(easy_results)} text regions "
+                  f"(combined total: {len(combined)})")
+
+        # Step 3: Tesseract fallback (if available and still sparse)
+        if self._has_tesseract and len(combined) < 3:
             tess_results = self._detect_text_tesseract(gray, existing)
             new_from_tess = 0
             for tr in tess_results:
-                # Skip if overlapping OR if text is a substring of existing
                 if self._overlaps_any(tr, combined):
                     continue
                 if tr.data and any(
@@ -953,16 +1335,7 @@ class ImageAnalyzer:
                 combined.append(tr)
                 new_from_tess += 1
             print(f"[ImageAnalyzer] Tesseract found {len(tess_results)} text regions "
-                  f"({new_from_tess} new after merge with RapidOCR)")
-
-        # Step 3: EasyOCR only if still sparse (it's slow)
-        if self._has_easyocr and len(combined) < 3:
-            easy_results = self._detect_text_easyocr(image, gray, existing)
-            for er in easy_results:
-                if not self._overlaps_any(er, combined):
-                    combined.append(er)
-            print(f"[ImageAnalyzer] EasyOCR found {len(easy_results)} text regions "
-                  f"(combined total: {len(combined)})")
+                  f"({new_from_tess} new after merge)")
 
         return combined
 
@@ -1002,7 +1375,7 @@ class ImageAnalyzer:
         """Detect text using Tesseract OCR with denoising + adaptive threshold (minimax approach)."""
         try:
             import pytesseract
-            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            pytesseract.pytesseract.tesseract_cmd = self._tesseract_path
         except Exception:
             return []
 
@@ -1363,6 +1736,20 @@ class ImageAnalyzer:
                 # Try to keep meaningful prefix
                 text = text[:max_chars].rsplit(' ', 1)[0] if ' ' in text[:max_chars] else text[:max_chars]
 
+            # Secondary noise validation after cleanup/truncation
+            if self._is_noise_text(text, r.width, r.height, img_h):
+                r.data = ""
+                continue
+
+            # Reject overly long multi-token strings in very wide, short regions
+            # (common artifact when OCR merges logos/icons with text)
+            words = text.split()
+            if r.height > 0 and (r.width / r.height) > 10 and len(words) > 12:
+                alpha_words = [w for w in words if len(re.sub(r'[^a-zA-Z0-9]', '', w)) >= 2]
+                if len(alpha_words) < len(words) * 0.6:
+                    r.data = ""
+                    continue
+
             r.data = text.strip()
 
         # Phase 2: Remove fragments - if text A is a substring of nearby text B
@@ -1551,25 +1938,38 @@ class ImageAnalyzer:
                 except Exception:
                     pass
 
-        # Always try Tesseract too (best on anti-aliased pasted text)
-        if self._has_tesseract:
+        # Try EasyOCR (pure pip, catches anti-aliased text)
+        if not best_text and self._has_easyocr:
+            reader = self._get_easyocr_reader()
+            if reader is not None:
+                for name, c in crops_to_try:
+                    try:
+                        results = reader.readtext(c)
+                        if results:
+                            texts = [t.strip() for _, t, c2 in results if c2 > 0.3 and t.strip()]
+                            if texts:
+                                candidate = " ".join(texts)
+                                if len(candidate) > len(best_text):
+                                    best_text = candidate
+                    except Exception:
+                        pass
+
+        # Tesseract fallback (requires system install)
+        if not best_text and self._has_tesseract:
             try:
                 import pytesseract
-                # Try multiple preprocessing + PSM combinations
                 preprocessed = []
-                # Variant 1: denoise + adaptive threshold
                 denoised = cv2.fastNlMeansDenoising(gray_crop, None, 10, 7, 21)
                 processed = cv2.adaptiveThreshold(
                     denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                     cv2.THRESH_BINARY, 11, 2
                 )
                 preprocessed.append(processed)
-                # Variant 2: Otsu threshold
                 _, otsu = cv2.threshold(gray_crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                 preprocessed.append(otsu)
 
                 for pp in preprocessed:
-                    for psm in ['7', '6']:  # 7=single line, 6=block of text
+                    for psm in ['7', '6']:
                         try:
                             text = pytesseract.image_to_string(
                                 pp, config=f'--oem 3 --psm {psm}'
@@ -1581,24 +1981,7 @@ class ImageAnalyzer:
             except Exception:
                 pass
 
-        # Return best result so far if we have one
-        if best_text:
-            return best_text
-
-        # Last resort: EasyOCR (slowest)
-        if self._has_easyocr:
-            reader = self._get_easyocr_reader()
-            if reader is not None:
-                for name, c in crops_to_try:
-                    try:
-                        results = reader.readtext(c)
-                        if results:
-                            texts = [t.strip() for _, t, c2 in results if c2 > 0.3 and t.strip()]
-                            if texts:
-                                return " ".join(texts)
-                    except Exception:
-                        pass
-        return ""
+        return best_text
 
     # ── Grid cell text detection ─────────────────────────────────────
 
@@ -1612,11 +1995,8 @@ class ImageAnalyzer:
         """
         results = []
         try:
-            if not self._has_tesseract:
+            if not self._has_ocr and not self._has_easyocr and not self._has_tesseract:
                 return results
-
-            import pytesseract
-            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
             img_h, img_w = gray.shape[:2]
 
@@ -1690,22 +2070,12 @@ class ImageAnalyzer:
                     if density < 0.005:
                         continue
 
-                    # Run OCR
+                    # Run OCR on cell crop
                     cell_gray = gray[y1:y2, x1:x2]
                     scale = max(2.0, 200.0 / max(y2 - y1, x2 - x1, 1))
                     big = cv2.resize(cell_gray, None, fx=scale, fy=scale,
                                      interpolation=cv2.INTER_CUBIC)
-                    text = ""
-                    for psm in ['7', '10']:
-                        try:
-                            t = pytesseract.image_to_string(
-                                big, config=f'--oem 3 --psm {psm}'
-                            ).strip()
-                            t = t.replace('\n', ' ').strip()
-                            if t and len(t) > len(text):
-                                text = t
-                        except Exception:
-                            pass
+                    text = self._ocr_crop_text(big)
 
                     if not text:
                         continue
@@ -1751,6 +2121,63 @@ class ImageAnalyzer:
 
     # ── Image/graphic detection ──────────────────────────────────────
 
+    def _detect_colored_regions(self, image: np.ndarray,
+                                existing: List[DetectedRegion]) -> List[DetectedRegion]:
+        """Detect colored regions (logos, icons with color) that binary detection misses.
+        Most label content is black/white; colored areas are logos or icons."""
+        results = []
+        try:
+            hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+            # High saturation = color (not gray/black/white)
+            sat = hsv[:, :, 2]  # value channel
+            sat_mask = hsv[:, :, 1] > 50  # saturation > 50
+            val_mask = hsv[:, :, 2] > 40   # not too dark
+            color_mask = (sat_mask & val_mask).astype(np.uint8) * 255
+
+            if np.sum(color_mask > 0) < 100:
+                return results
+
+            # Mask out existing text/barcode regions to avoid detecting
+            # sub-pixel rendering artifacts at text edges as colored regions.
+            for r in existing:
+                if r.region_type in ("text", "barcode"):
+                    pad = 8
+                    cv2.rectangle(color_mask,
+                                  (r.x - pad, r.y - pad),
+                                  (r.x + r.width + pad, r.y + r.height + pad),
+                                  0, -1)
+
+            if np.sum(color_mask > 0) < 100:
+                return results
+
+            # Dilate to group nearby colored pixels
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+            dilated = cv2.dilate(color_mask, kernel, iterations=3)
+
+            contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL,
+                                           cv2.CHAIN_APPROX_SIMPLE)
+            img_h, img_w = image.shape[:2]
+            min_area = 400
+            max_area = int(img_w * img_h * 0.1)
+
+            for cnt in contours:
+                x, y, w, h = cv2.boundingRect(cnt)
+                area = w * h
+                if area < min_area or area > max_area:
+                    continue
+                # Check actual colored pixel density in region
+                roi = color_mask[y:y + h, x:x + w]
+                density = np.sum(roi > 0) / max(area, 1)
+                if density < 0.05:
+                    continue
+                if not self._overlaps_any(DetectedRegion("image", x, y, w, h), existing):
+                    results.append(DetectedRegion(
+                        "image", x=x, y=y, width=w, height=h,
+                        confidence=0.6, extra={"source": "color", "density": round(density, 3)}))
+        except Exception as e:
+            print(f"[ImageAnalyzer] Color detection error: {e}")
+        return results
+
     def _detect_images(self, gray: np.ndarray, existing: List[DetectedRegion]) -> List[DetectedRegion]:
         """Detect image/graphic regions (logos, icons, filled shapes).
         Only compact, high-density regions qualify (not scattered leftover pixels)."""
@@ -1760,10 +2187,15 @@ class ImageAnalyzer:
             img_area = img_h * img_w
             binary = self._binary_cache.copy()
 
-            # Mask out all already-detected regions with generous padding
+            # Mask out all already-detected regions with moderate padding
             mask = np.ones_like(binary) * 255
             for r in existing:
-                pad = 15
+                if r.region_type == "text":
+                    pad = 5
+                elif r.region_type in ("hline", "vline"):
+                    pad = 3
+                else:
+                    pad = 15
                 cv2.rectangle(mask, (r.x - pad, r.y - pad),
                               (r.x + r.width + pad, r.y + r.height + pad), 0, -1)
             masked = cv2.bitwise_and(binary, mask)
@@ -1775,7 +2207,7 @@ class ImageAnalyzer:
             dilated = cv2.dilate(masked, kernel, iterations=2)
 
             contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            min_area = max(800, int(img_area * 0.002))
+            min_area = max(500, int(img_area * 0.0009))
             max_area = int(img_area * 0.25)  # No region larger than 25% of image
 
             for cnt in contours:
@@ -1829,19 +2261,26 @@ class ImageAnalyzer:
                             img_regions: List[DetectedRegion]):
         """Try OCR on image regions to detect large bold text (e.g. 'CA').
         Returns (text_regions, remaining_image_regions)."""
-        if not self._has_tesseract or not img_regions:
-            return [], img_regions
-
-        try:
-            import pytesseract
-            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-        except Exception:
+        has_any_ocr = self._has_ocr or self._has_easyocr or self._has_tesseract
+        if not has_any_ocr or not img_regions:
             return [], img_regions
 
         text_regions = []
         remaining = []
 
         for region in img_regions:
+            # Skip roughly-square, dense regions — likely QR codes, icons, or logos.
+            # OCR on these produces garbage text; keep as image for GFA rendering.
+            aspect = region.width / max(region.height, 1)
+            if 0.5 <= aspect <= 2.0 and region.width > 30 and region.height > 30:
+                roi = gray[region.y:region.y + region.height,
+                           region.x:region.x + region.width]
+                if roi.size > 0:
+                    dark_ratio = float(np.mean(roi < 128))
+                    if dark_ratio > 0.25:
+                        remaining.append(region)
+                        continue
+
             pad = 10
             x1 = max(0, region.x - pad)
             y1 = max(0, region.y - pad)
@@ -1863,19 +2302,8 @@ class ImageAnalyzer:
             # Try Otsu binary
             _, binary = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-            best_text = ""
-            for psm in ['8', '7', '13']:  # 8=single word, 7=single line, 13=raw line
-                try:
-                    text = pytesseract.image_to_string(
-                        binary, config=f'--oem 3 --psm {psm}'
-                    ).strip()
-                    if text and len(text) > len(best_text):
-                        best_text = text
-                except Exception:
-                    pass
-
-            # Clean: remove newlines, keep only clean text
-            best_text = best_text.replace('\n', ' ').strip()
+            # Run OCR using available engines
+            best_text = self._ocr_crop_text(crop)
             # Accept text from image regions only if it looks like real text:
             # - At least 2 alphanumeric chars (single chars are garbage)
             # - No special characters that suggest OCR noise
@@ -1883,7 +2311,7 @@ class ImageAnalyzer:
             #   or all digits, since short lowercase is usually OCR garbage (aoe, ot, Be)
             import re
             alnum = re.sub(r'[^a-zA-Z0-9]', '', best_text)
-            has_special = any(c in best_text for c in '{}|\\~`^')
+            has_special = any(c in best_text for c in '{}|\\~`^#&=')
             is_valid = False
             if alnum and len(alnum) >= 2 and len(alnum) <= 10 and not has_special:
                 if len(alnum) <= 3:
@@ -1891,6 +2319,14 @@ class ImageAnalyzer:
                     is_valid = alnum.isupper() or alnum.isdigit()
                 else:
                     is_valid = True
+
+            # Reject garbage OCR: many single-char words indicate noise from
+            # reading complex graphics (QR codes, logos, dense patterns).
+            if is_valid:
+                words = best_text.split()
+                single_char_words = sum(1 for w in words if len(w) == 1)
+                if len(words) >= 3 and single_char_words / len(words) > 0.4:
+                    is_valid = False
 
             # Guard: large graphic regions can be misread as short text (e.g. logo -> "CA").
             # In these cases keep the region as bitmap image for pixel-accurate rendering.
@@ -2095,48 +2531,56 @@ class ImageAnalyzer:
             print(f"[ImageAnalyzer] Reverse banner detection error: {e}")
         return results
 
+    def _detect_text_colors(self, gray: np.ndarray, regions: List[DetectedRegion]):
+        """Detect background color for each text region.
+
+        For each text region not already marked as reverse, check if it sits on a
+        dark background (white/light text on dark). If so, set extra["reverse"]=True.
+        """
+        img_h, img_w = gray.shape[:2]
+        reverse_count = 0
+        for r in regions:
+            if r.region_type != "text":
+                continue
+            if r.extra.get("reverse"):
+                continue  # already marked by banner detection
+
+            # Extract ROI with small padding
+            pad = 2
+            y1 = max(0, r.y - pad)
+            y2 = min(img_h, r.y + r.height + pad)
+            x1 = max(0, r.x - pad)
+            x2 = min(img_w, r.x + r.width + pad)
+            if y2 <= y1 or x2 <= x1:
+                continue
+
+            roi = gray[y1:y2, x1:x2]
+
+            # Sample background: use border pixels (edges of the ROI)
+            # These are most likely background, not text ink
+            border_pixels = np.concatenate([
+                roi[0, :],           # top row
+                roi[-1, :],          # bottom row
+                roi[:, 0],           # left column
+                roi[:, -1],          # right column
+            ])
+            bg_mean = float(np.mean(border_pixels))
+
+            # If background is dark (mean < 100), text is light/white
+            if bg_mean < 100:
+                r.extra["reverse"] = True
+                reverse_count += 1
+
+        if reverse_count > 0:
+            print(f"[ImageAnalyzer] Text color detection: {reverse_count} reverse text regions")
+
     def _ocr_reverse_region(self, inverted_gray: np.ndarray) -> str:
-        """Run OCR on an inverted (white-on-dark -> dark-on-white) region."""
-        best_text = ""
-
-        # Try Tesseract first
-        if self._has_tesseract:
-            try:
-                import pytesseract
-                pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-                _, binary = cv2.threshold(inverted_gray, 0, 255,
-                                          cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                for psm in ['7', '6']:
-                    try:
-                        text = pytesseract.image_to_string(
-                            binary, config=f'--oem 3 --psm {psm}'
-                        ).strip()
-                        if text and len(text) > len(best_text):
-                            best_text = text
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        # Try RapidOCR
-        if not best_text and self._has_ocr:
-            engine = self._get_ocr_reader()
-            if engine:
-                try:
-                    ocr_results, _ = engine(inverted_gray)
-                    if ocr_results:
-                        texts = [t.strip() for _, t, c in ocr_results if c > 0.3 and t.strip()]
-                        if texts:
-                            candidate = " ".join(texts)
-                            if len(candidate) > len(best_text):
-                                best_text = candidate
-                except Exception:
-                    pass
+        """Run OCR on an inverted (white-on-dark -> dark-on-white) region.
+        Priority: RapidOCR → EasyOCR → Tesseract."""
+        best_text = self._ocr_crop_text(inverted_gray)
 
         # Clean up
-        best_text = best_text.replace('\n', ' ').strip()
         import re
-        # Remove garbage characters
         best_text = re.sub(r'[{}\|\\~`\^]', '', best_text).strip()
         return best_text
 
@@ -2369,7 +2813,57 @@ class ImageAnalyzer:
         except Exception as e:
             print(f"[ImageAnalyzer] Barcode region decode error: {e}")
 
-    def _measure_module_width(self, gray: np.ndarray, bc: DetectedRegion) -> int:
+    def _infer_barcode_orientation(self, gray: np.ndarray, bc: DetectedRegion) -> str:
+        """Infer ZPL barcode orientation.
+
+        Returns:
+            "N" -> bars are vertical in image (standard horizontal barcode)
+            "R" -> bars are horizontal in image (visually vertical barcode)
+        """
+        try:
+            img_h, img_w = gray.shape[:2]
+            pad = 2
+            x1 = max(0, bc.x + pad)
+            y1 = max(0, bc.y + pad)
+            x2 = min(img_w, bc.x + bc.width - pad)
+            y2 = min(img_h, bc.y + bc.height - pad)
+            if x2 - x1 < 10 or y2 - y1 < 10:
+                return "R" if bc.height > bc.width * 1.35 else "N"
+
+            crop = gray[y1:y2, x1:x2]
+            _, binary = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            ch, cw = binary.shape[:2]
+
+            row_scores = []
+            for frac in [0.25, 0.4, 0.5, 0.6, 0.75]:
+                sy = int(ch * frac)
+                if 0 <= sy < ch:
+                    row = binary[sy, :]
+                    transitions = np.sum(np.abs(np.diff(row.astype(np.int16))) > 0)
+                    row_scores.append(int(transitions))
+
+            col_scores = []
+            for frac in [0.25, 0.4, 0.5, 0.6, 0.75]:
+                sx = int(cw * frac)
+                if 0 <= sx < cw:
+                    col = binary[:, sx]
+                    transitions = np.sum(np.abs(np.diff(col.astype(np.int16))) > 0)
+                    col_scores.append(int(transitions))
+
+            avg_row = float(np.mean(row_scores)) if row_scores else 0.0
+            avg_col = float(np.mean(col_scores)) if col_scores else 0.0
+
+            if avg_col > avg_row * 1.25:
+                return "R"
+            if avg_row > avg_col * 1.25:
+                return "N"
+
+            return "R" if bc.height > bc.width * 1.35 else "N"
+        except Exception:
+            return "R" if bc.height > bc.width * 1.35 else "N"
+
+    def _measure_module_width(self, gray: np.ndarray, bc: DetectedRegion,
+                              orientation: str = "N") -> int:
         """Measure the narrowest bar (module) width directly from the image pixels.
         Returns module width in pixels (1-10), or 0 if measurement fails."""
         try:
@@ -2387,13 +2881,21 @@ class ImageAnalyzer:
             # Binarize with Otsu
             _, binary = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-            # Sample multiple horizontal scanlines through the barcode
+            # Sample scanlines through the barcode in the axis orthogonal to bars.
+            # N: bars vertical  -> sample horizontal lines
+            # R: bars horizontal -> sample vertical lines
             ch, cw = binary.shape[:2]
             scanlines = []
-            for frac in [0.35, 0.45, 0.5, 0.55, 0.65]:
-                sy = int(ch * frac)
-                if 0 <= sy < ch:
-                    scanlines.append(binary[sy, :])
+            if orientation == "R":
+                for frac in [0.35, 0.45, 0.5, 0.55, 0.65]:
+                    sx = int(cw * frac)
+                    if 0 <= sx < cw:
+                        scanlines.append(binary[:, sx])
+            else:
+                for frac in [0.35, 0.45, 0.5, 0.55, 0.65]:
+                    sy = int(ch * frac)
+                    if 0 <= sy < ch:
+                        scanlines.append(binary[sy, :])
 
             if not scanlines:
                 return 0
@@ -2464,6 +2966,8 @@ class ImageAnalyzer:
         if len(vlines) < 8:
             return line_regions, []
 
+        img_h, img_w = self._binary_cache.shape[:2]
+
         # Group vlines by y position (within 20px tolerance)
         vlines_sorted = sorted(vlines, key=lambda v: v.y)
         groups = []
@@ -2484,20 +2988,51 @@ class ImageAnalyzer:
             # Check heights are similar (within 30% of median)
             heights = [v.height for v in group]
             median_h = sorted(heights)[len(heights) // 2]
+            # Very tall lines are usually table/grid borders, not barcodes
+            if median_h > img_h * 0.45:
+                continue
             consistent = [v for v in group if abs(v.height - median_h) < median_h * 0.3]
             if len(consistent) < 8:
                 continue
-            # Build bounding box for the barcode
-            min_x = min(v.x for v in consistent)
-            max_x = max(v.x + v.width for v in consistent)
-            min_y = min(v.y for v in consistent)
-            max_y = max(v.y + v.height for v in consistent)
-            barcodes.append(DetectedRegion(
-                "barcode", x=min_x, y=min_y,
-                width=max_x - min_x, height=max_y - min_y,
-                barcode_type="unknown", confidence=0.5))
-            for v in consistent:
-                consumed_vlines.add(id(v))
+
+            # Split by x-gaps so separate structures in same row don't merge
+            consistent = sorted(consistent, key=lambda v: v.x)
+            max_gap = max(10, int(np.median([max(1, v.width) for v in consistent]) * 6))
+            x_clusters = [[consistent[0]]]
+            for v in consistent[1:]:
+                prev = x_clusters[-1][-1]
+                gap = v.x - (prev.x + prev.width)
+                if gap <= max_gap:
+                    x_clusters[-1].append(v)
+                else:
+                    x_clusters.append([v])
+
+            for cluster in x_clusters:
+                if len(cluster) < 8:
+                    continue
+
+                min_x = min(v.x for v in cluster)
+                max_x = max(v.x + v.width for v in cluster)
+                min_y = min(v.y for v in cluster)
+                max_y = max(v.y + v.height for v in cluster)
+                bw = max_x - min_x
+                bh = max_y - min_y
+                if bw <= 0 or bh <= 0:
+                    continue
+                # 1D barcode should be wider than tall
+                if bw / max(bh, 1) < 1.6:
+                    continue
+                # Table-like patterns have too few transitions
+                if not self._verify_barcode_pattern(self._binary_cache, min_x, min_y, bw, bh):
+                    continue
+
+                barcodes.append(DetectedRegion(
+                    "barcode", x=min_x, y=min_y,
+                    width=bw, height=bh,
+                    barcode_type="unknown", confidence=0.5
+                ))
+                for v in cluster:
+                    consumed_vlines.add(id(v))
 
         remaining_vlines = [v for v in vlines if id(v) not in consumed_vlines]
         return other_lines + remaining_vlines, barcodes
@@ -2511,12 +3046,29 @@ class ImageAnalyzer:
         import re
         # Strip whitespace for analysis
         t = text.strip()
+        if not t:
+            return True
         # Count actual alphanumeric characters
         alnum = re.sub(r'[^a-zA-Z0-9]', '', t)
+        alpha = re.sub(r'[^a-zA-Z]', '', t)
 
         # Pure non-alphanumeric text (e.g. "]", "=]", "[]", "|")
         if len(alnum) == 0:
             return True
+
+        # Excessively tall text regions are almost always OCR bleed from logos/banners
+        if h > img_h * 0.12 and len(alnum) > 4:
+            return True
+
+        # Low alphanumeric density with enough symbols usually indicates OCR garbage
+        if len(t) >= 8 and len(alnum) / max(len(t), 1) < 0.45:
+            return True
+
+        # Long alpha strings with very low vowel ratio are typically gibberish
+        if len(alpha) >= 10:
+            vowels = len(re.findall(r'[aeiouAEIOU]', alpha))
+            if vowels / len(alpha) < 0.15:
+                return True
 
         # Very short text (1-2 alphanum chars) with brackets/symbols → noise from tick marks
         if len(alnum) <= 2 and len(t) > len(alnum):
@@ -2553,6 +3105,12 @@ class ImageAnalyzer:
                 unique_words = len(set(w.lower() for w in words))
                 if short_words / len(words) > 0.35 or unique_words < len(words) * 0.7:
                     return True
+
+        # Ultra-wide regions with many tokens are often merged OCR of graphics
+        if h > 0 and w / h > 12:
+            words = t.split()
+            if len(words) > 10 and len(alnum) > 20:
+                return True
 
         return False
 

@@ -56,11 +56,11 @@ class TextElement(BaseElement):
 
     def boundingRect(self) -> QRectF:
         margin = HANDLE_HALF + 2
-        # Extend bounding rect to include font descenders so text is not clipped
-        extra_descent = self._font_descent
+        # ZPL font_height already includes full cell height (ascender + descender),
+        # so no extra descent padding is needed.
         return QRectF(-margin, -margin,
                        self._dot_width + margin * 2,
-                       self._dot_height + extra_descent + margin * 2)
+                       self._dot_height + margin * 2)
 
     def _draw_content(self, painter: QPainter):
         font = self._get_qfont()
@@ -69,7 +69,6 @@ class TextElement(BaseElement):
         text = self._properties.get("data", "")
         orientation = self._properties.get("orientation", "N")
         font_width = self._properties.get("font_width", 0)
-        descent = self._font_descent
 
         # Calculate horizontal scale factor to match ZPL font_width
         scale_x = 1.0
@@ -82,14 +81,14 @@ class TextElement(BaseElement):
 
         if orientation == "N":
             self._draw_scaled_text(painter, text, scale_x,
-                                   QRectF(0, 0, self._dot_width, self._dot_height + descent),
+                                   QRectF(0, 0, self._dot_width, self._dot_height),
                                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         elif orientation == "R":
             painter.save()
             painter.translate(self._dot_width, 0)
             painter.rotate(90)
             self._draw_scaled_text(painter, text, scale_x,
-                                   QRectF(0, 0, self._dot_height, self._dot_width + descent),
+                                   QRectF(0, 0, self._dot_height, self._dot_width),
                                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             painter.restore()
         elif orientation == "I":
@@ -97,7 +96,7 @@ class TextElement(BaseElement):
             painter.translate(self._dot_width, self._dot_height)
             painter.rotate(180)
             self._draw_scaled_text(painter, text, scale_x,
-                                   QRectF(0, 0, self._dot_width, self._dot_height + descent),
+                                   QRectF(0, 0, self._dot_width, self._dot_height),
                                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             painter.restore()
         elif orientation == "B":
@@ -105,21 +104,41 @@ class TextElement(BaseElement):
             painter.translate(0, self._dot_height)
             painter.rotate(270)
             self._draw_scaled_text(painter, text, scale_x,
-                                   QRectF(0, 0, self._dot_height, self._dot_width + descent),
+                                   QRectF(0, 0, self._dot_height, self._dot_width),
                                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             painter.restore()
 
     def _draw_scaled_text(self, painter, text, scale_x, rect, alignment):
-        """Draw text with optional horizontal scaling for ZPL font_width."""
-        if abs(scale_x - 1.0) > 0.01:
-            painter.save()
-            painter.scale(scale_x, 1.0)
-            scaled_rect = QRectF(rect.x() / scale_x, rect.y(),
-                                 rect.width() / scale_x, rect.height())
-            painter.drawText(scaled_rect, alignment, text)
-            painter.restore()
-        else:
-            painter.drawText(rect, alignment, text)
+        """Draw text with horizontal and vertical scaling.
+
+        Horizontal: scales to match ZPL font_width * char_count.
+        Vertical: stretches ink to fill the full element height by removing
+        the font's natural top gap and scaling up.
+        """
+        font = painter.font()
+        fm = QFontMetrics(font)
+        ascent = fm.ascent()
+        descent = fm.descent()
+        natural_h = ascent + descent
+
+        # Compute vertical scale: stretch visible ink to fill rect height.
+        # The top gap is the space between top of cell and top of ink (~21%).
+        # We want ink to start at y=0 and span the full rect height.
+        top_gap = max(0, ascent - fm.capHeight()) if hasattr(fm, 'capHeight') else int(ascent * 0.23)
+        visible_ink_h = natural_h - top_gap
+        scale_y = rect.height() / max(visible_ink_h, 1) if rect.height() > 0 else 1.0
+
+        painter.save()
+        # Apply both scales and shift up to remove top gap
+        painter.scale(scale_x, scale_y)
+        draw_rect = QRectF(
+            rect.x() / scale_x,
+            (rect.y() - top_gap) / scale_y,
+            rect.width() / scale_x,
+            natural_h,
+        )
+        painter.drawText(draw_rect, alignment, text)
+        painter.restore()
 
     def get_zpl_element(self):
         elem = super().get_zpl_element()

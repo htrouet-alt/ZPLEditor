@@ -13,7 +13,8 @@ Python 3.10+ ve PyQt6 ile geliştirilmiş, ZPL (Zebra Programming Language) kodu
 - **Barkod:** python-barcode (1D), qrcode (QR), pyzbar (detection)
 - **API:** Labelary API (api.labelary.com) — ZPL → PNG render
 - **Sanal ortam:** `.venv/` dizininde
-
+- #Metinleri resim yapma
+- #Qr kodları resim yapma , bakrodları resim yapma
 ## Proje Yapısı
 
 ```

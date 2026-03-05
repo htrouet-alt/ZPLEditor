@@ -4,7 +4,8 @@ for detected regions: Red=images, Yellow=text, Blue=QR, Green=barcodes.
 """
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QLabel, QScrollArea, QListWidget, QListWidgetItem,
-                              QSplitter, QProgressBar)
+                              QSplitter, QProgressBar, QComboBox, QLineEdit,
+                              QFileDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QRectF
 from PyQt6.QtGui import QPainter, QPixmap, QImage, QColor, QPen, QFont, QBrush
 import numpy as np
@@ -137,6 +138,7 @@ class AnalysisImageWidget(QWidget):
 class ImageAnalysisView(QWidget):
     """Complete image analysis view with image display, region list, and controls."""
     generate_zpl_signal = pyqtSignal()
+    batch_process_signal = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -167,6 +169,63 @@ class ImageAnalysisView(QWidget):
             "background-color: #007ACC; color: white; }")
         btn_layout.addWidget(self._btn_generate)
 
+        # Batch process button
+        self._btn_batch = QPushButton("Batch Process...")
+        self._btn_batch.setToolTip("Select multiple images, analyze and save ZPL files to a folder")
+        self._btn_batch.clicked.connect(lambda: self.batch_process_signal.emit())
+        self._btn_batch.setStyleSheet(
+            "QPushButton { padding: 6px 12px; font-weight: bold; "
+            "background-color: #5F7C3A; color: white; }")
+        btn_layout.addWidget(self._btn_batch)
+
+        # OCR engine selector
+        btn_layout.addSpacing(15)
+        btn_layout.addWidget(QLabel("OCR Engine:"))
+
+        self._ocr_combo = QComboBox()
+        self._ocr_combo.setToolTip("Select which OCR engine to use for text detection")
+        self._ocr_combo.setMinimumWidth(160)
+
+        # Probe engine availability once
+        from ..image_processing.image_analyzer import ImageAnalyzer
+        from ..utils.settings import AppSettings
+        self._app_settings = AppSettings()
+        tess_path = self._app_settings.tesseract_path
+        self._engine_availability = ImageAnalyzer.get_available_engines(tesseract_path=tess_path)
+
+        # (display_name, internal_key_or_None)
+        self._engine_options = [
+            ("Auto (All Available)", None),
+            ("RapidOCR", "rapidocr"),
+            ("EasyOCR", "easyocr"),
+            ("Tesseract", "tesseract"),
+        ]
+
+        for display_name, key in self._engine_options:
+            if key is None:
+                self._ocr_combo.addItem(display_name)
+            else:
+                is_available = self._engine_availability.get(key, False)
+                if is_available:
+                    self._ocr_combo.addItem(display_name)
+                else:
+                    self._ocr_combo.addItem(f"{display_name} (not installed)")
+
+        # Gray out unavailable engines
+        model = self._ocr_combo.model()
+        for i, (_, key) in enumerate(self._engine_options):
+            if key is not None and not self._engine_availability.get(key, False):
+                model.item(i).setEnabled(False)
+
+        # Default to Tesseract if available, otherwise Auto
+        default_idx = 0
+        for i, (_, key) in enumerate(self._engine_options):
+            if key == "tesseract" and self._engine_availability.get("tesseract", False):
+                default_idx = i
+                break
+        self._ocr_combo.setCurrentIndex(default_idx)
+        btn_layout.addWidget(self._ocr_combo)
+
         btn_layout.addStretch()
 
         # Legend
@@ -181,6 +240,22 @@ class ImageAnalysisView(QWidget):
 
         layout.addLayout(btn_layout)
         layout.addLayout(legend_layout)
+
+        # Tesseract path row
+        tess_layout = QHBoxLayout()
+        tess_layout.addWidget(QLabel("Tesseract:"))
+        self._tess_path_edit = QLineEdit(tess_path)
+        self._tess_path_edit.setToolTip("Path to tesseract.exe")
+        self._tess_path_edit.setMinimumWidth(250)
+        self._tess_path_edit.editingFinished.connect(self._on_tesseract_path_changed)
+        tess_layout.addWidget(self._tess_path_edit)
+        self._btn_tess_browse = QPushButton("...")
+        self._btn_tess_browse.setFixedWidth(30)
+        self._btn_tess_browse.setToolTip("Browse for tesseract.exe")
+        self._btn_tess_browse.clicked.connect(self._browse_tesseract)
+        tess_layout.addWidget(self._btn_tess_browse)
+        tess_layout.addStretch()
+        layout.addLayout(tess_layout)
 
         # Main area: splitter with image view and region list
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -236,14 +311,22 @@ class ImageAnalysisView(QWidget):
 
         try:
             from ..image_processing.image_analyzer import ImageAnalyzer
-            analyzer = ImageAnalyzer()
+
+            # Get selected engine from combo box
+            selected_index = self._ocr_combo.currentIndex()
+            _, selected_key = self._engine_options[selected_index]
+            enabled_engines = {selected_key} if selected_key else None
+
+            tess_path = self._app_settings.tesseract_path
+            analyzer = ImageAnalyzer(enabled_engines=enabled_engines, tesseract_path=tess_path)
             results = analyzer.analyze(self._current_label.image)
             self._current_label.analysis_results = results
             self._show_results(results)
             self._btn_generate.setEnabled(len(results) > 0)
+            engine_label = self._ocr_combo.currentText()
             self._status.setText(
                 f"Analysis complete: {len(results)} regions detected "
-                f"({self._count_by_type(results)})")
+                f"({self._count_by_type(results)}) | Engine: {engine_label}")
         except Exception as e:
             self._status.setText(f"Analysis error: {e}")
             import traceback
@@ -272,6 +355,35 @@ class ImageAnalysisView(QWidget):
         if self._current_label is None:
             return
         self.generate_zpl_signal.emit()
+
+    def _browse_tesseract(self):
+        """Open file dialog to select tesseract.exe."""
+        import os
+        current = self._tess_path_edit.text()
+        start_dir = os.path.dirname(current) if current else ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Tesseract Executable", start_dir,
+            "Executable (tesseract.exe);;All Files (*.*)")
+        if path:
+            self._tess_path_edit.setText(path)
+            self._on_tesseract_path_changed()
+
+    def _on_tesseract_path_changed(self):
+        """Save the new Tesseract path to settings and refresh engine availability."""
+        path = self._tess_path_edit.text().strip()
+        if path:
+            self._app_settings.tesseract_path = path
+            # Refresh engine availability with new path
+            from ..image_processing.image_analyzer import ImageAnalyzer
+            self._engine_availability = ImageAnalyzer.get_available_engines(tesseract_path=path)
+            # Update combo box items
+            model = self._ocr_combo.model()
+            for i, (display_name, key) in enumerate(self._engine_options):
+                if key is not None:
+                    is_available = self._engine_availability.get(key, False)
+                    self._ocr_combo.setItemText(
+                        i, display_name if is_available else f"{display_name} (not installed)")
+                    model.item(i).setEnabled(is_available)
 
     def _count_by_type(self, results):
         """Count regions by type for display."""
