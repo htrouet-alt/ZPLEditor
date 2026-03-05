@@ -2,7 +2,7 @@
 
 A full-featured 2D label design editor built with Python and PyQt6 for visually editing ZPL (Zebra Programming Language) code. Features a split-panel interface with a ZPL code editor on the left and a WYSIWYG visual canvas on the right, with real-time bidirectional synchronization.
 
-![ZPL Visual Editor](Examples/diff/label_2_sidebyside.png)
+![ZPL Visual Editor - Main Window](docs/screenshot_main.png)
 
 ## Quick Start
 
@@ -210,18 +210,16 @@ zpl_editor/
     └── settings.py                  # App settings (Tesseract path, etc.)
 ```
 
-## Examples
+## Sample Labels
 
-The `Examples/` directory contains sample labels:
+8 different label layouts (A-H) with various shipping companies, generated and analyzed with >=96% pixel accuracy:
 
-```
-Examples/
-├── input/          # Source label PNG images
-├── output/
-│   ├── ZPLCode/    # Generated ZPL code
-│   └── ZplImage/   # Rendered output images
-└── diff/           # Side-by-side comparison images
-```
+| | | | |
+|:---:|:---:|:---:|:---:|
+| ![Label A](TestData/input/gen_label_A.png) | ![Label B](TestData/input/gen_label_B.png) | ![Label C](TestData/input/gen_label_C.png) | ![Label D](TestData/input/gen_label_D.png) |
+| **A** - Yurtici / Trendyol | **B** - Aras / N11 | **C** - Surat / GittiGidiyor | **D** - MNG / Hepsiburada |
+| ![Label E](TestData/input/gen_label_E.png) | ![Label F](TestData/input/gen_label_F.png) | ![Label G](TestData/input/gen_label_G.png) | ![Label H](TestData/input/gen_label_H.png) |
+| **E** - HepsiJet / Ciceksepeti | **F** - PTT / Amazon | **G** - Trendyol Express | **H** - Yurtici / N11 |
 
 ## Architecture Notes
 
