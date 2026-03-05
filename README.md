@@ -4,6 +4,79 @@ A full-featured 2D label design editor built with Python and PyQt6 for visually 
 
 ![ZPL Visual Editor](Examples/diff/label_2_sidebyside.png)
 
+## Quick Start
+
+The easiest way to run the application -- no manual setup required:
+
+**Windows:** Double-click `run.bat`
+
+**Linux / macOS:**
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+The launcher scripts automatically create a virtual environment, install all dependencies, and start the application on first run. Subsequent launches skip the setup and start instantly.
+
+## Standalone EXE (Windows)
+
+A pre-built Windows executable is available in the `dist/ZPL_Editor/` folder. No Python installation required -- just run `ZPL_Editor.exe`.
+
+To build the EXE yourself:
+```bash
+pip install pyinstaller
+pyinstaller zpl_editor.spec --noconfirm
+```
+The output will be in `dist/ZPL_Editor/`.
+
+> **Note:** The EXE bundle is ~700 MB due to EasyOCR's PyTorch dependency.
+
+## Manual Installation
+
+If you prefer to set up manually instead of using the launcher scripts:
+
+```bash
+# Clone the repository
+git clone https://github.com/katifurkan/Zpl.git
+cd Zpl
+
+# Create virtual environment
+python -m venv .venv
+
+# Activate (Windows)
+.venv\Scripts\activate
+
+# Activate (Linux / macOS)
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+pip install opencv-python
+
+# Run
+python main.py
+```
+
+## Requirements
+
+- Python 3.10+
+- [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) -- required for text recognition. Default install path: `C:\Program Files\Tesseract-OCR\`. If installed elsewhere, you can change the path from the app via `Edit > Settings` or the Image Analysis tab.
+
+### Python Dependencies
+
+```
+PyQt6
+numpy
+opencv-python
+pytesseract          # Tesseract OCR Python wrapper
+rapidocr_onnxruntime # primary OCR engine (pure pip, ~15MB ONNX models)
+easyocr              # secondary OCR engine (pure pip, PyTorch-based)
+pyzbar
+qrcode
+python-barcode
+requests
+```
+
 ## Features
 
 ### Visual Editor
@@ -37,10 +110,9 @@ Import a label image (PNG) and automatically convert it to structured ZPL code:
 - **Reverse Text Detection** -- detects white-on-black banners and per-region text color
 - **Smart Barcode Rendering** -- uses structured `^BC` when module width matches integer grid, falls back to `^GFA` bitmap when fractional module width causes progressive bar misalignment
 - **QR Bitmap Preservation** -- encodes QR codes as `^GFA` to preserve exact module patterns from the original image
-
 - **Batch Processing** -- select multiple images, analyze all at once, and save individual `.zpl` files to a chosen output folder
 - **OCR Engine Selector** -- choose between Auto, RapidOCR, EasyOCR, or Tesseract from the UI
-- **Configurable Tesseract Path** -- set the Tesseract executable path from the UI; persisted across sessions
+- **Configurable Tesseract Path** -- set the Tesseract executable path from the UI (`Edit > Settings`); persisted across sessions
 
 **Pixel Accuracy:** Achieves **>=96%** pixel similarity across test labels using structured ZPL elements (text remains as `^FD`/`^A0N`, not converted to bitmaps).
 
@@ -57,6 +129,32 @@ Import a label image (PNG) and automatically convert it to structured ZPL code:
 - **Toolbar** -- quick-add Text, Line, Rectangle, Circle, Barcode, QR Code
 - **Right-click Menu** -- copy, paste, delete, bring to front/back
 - **Export** -- save as PNG
+
+## Workflow
+
+1. **Create from scratch** -- use the toolbar to add text, barcodes, QR codes, boxes, lines
+2. **Edit ZPL code** -- type ZPL in the left panel, see it rendered on the right
+3. **Import image** -- click "Import" to load a label PNG, then "Analyze Image" + "Generate ZPL from Image" to convert it to editable ZPL
+4. **Batch process** -- click "Batch Process..." to select multiple images, analyze all, and save `.zpl` files to a folder
+5. **Export** -- save the rendered label as PNG
+
+## ZPL Commands Supported
+
+| Priority | Commands |
+|----------|----------|
+| Core | `^XA` `^XZ` `^FO` `^FT` `^FD` `^FS` `^A` `^CF` `^CI` `^GB` |
+| Barcode | `^BC` (Code128) `^B3` (Code39) `^BE` (EAN13) `^BY` `^BQ` (QR) |
+| Graphics | `^GC` (circle) `^GD` (diagonal) `^GFA` (bitmap) |
+| Layout | `^FB` (field block) `^FW` (orientation) `^PW` `^LL` `^LH` `^FR` |
+| Comment | `^FX` |
+
+## Coordinate System
+
+- Origin: top-left corner (0, 0)
+- X increases to the right, Y increases downward
+- All coordinates in dots (1 dot = 1 pixel at native DPI)
+- Default: 203 DPI (1 mm = 8 dots, 1 inch = 203 dots)
+- Standard 4" x 6" label = 812 x 1218 dots
 
 ## Project Structure
 
@@ -111,105 +209,6 @@ zpl_editor/
     ├── export.py                    # PNG export
     └── settings.py                  # App settings (Tesseract path, etc.)
 ```
-
-## Quick Start
-
-The easiest way to run the application -- no manual setup required:
-
-**Windows:** Double-click `run.bat`
-
-**Linux / macOS:**
-```bash
-chmod +x run.sh
-./run.sh
-```
-
-The launcher scripts automatically create a virtual environment, install all dependencies, and start the application on first run. Subsequent launches skip the setup and start instantly.
-
-## Standalone EXE (Windows)
-
-A pre-built Windows executable is available in the `dist/ZPL_Editor/` folder. No Python installation required -- just run `ZPL_Editor.exe`.
-
-To build the EXE yourself:
-```bash
-pip install pyinstaller
-pyinstaller zpl_editor.spec --noconfirm
-```
-The output will be in `dist/ZPL_Editor/`.
-
-> **Note:** The EXE bundle is ~700 MB due to EasyOCR's PyTorch dependency.
-
-## Requirements
-
-- Python 3.10+
-- [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) -- required for text recognition. Default install path: `C:\Program Files\Tesseract-OCR\`. If installed elsewhere, you can change the path from the app via `Edit > Settings` or the Image Analysis tab.
-
-### Python Dependencies
-
-```
-PyQt6
-numpy
-opencv-python
-pytesseract          # Tesseract OCR Python wrapper
-rapidocr_onnxruntime # primary OCR engine (pure pip, ~15MB ONNX models)
-easyocr              # secondary OCR engine (pure pip, PyTorch-based)
-pyzbar
-qrcode
-python-barcode
-requests
-```
-
-## Manual Installation
-
-If you prefer to set up manually instead of using the launcher scripts:
-
-```bash
-# Clone the repository
-git clone https://github.com/katifurkan/Zpl.git
-cd Zpl
-
-# Create virtual environment
-python -m venv .venv
-
-# Activate (Windows)
-.venv\Scripts\activate
-
-# Activate (Linux / macOS)
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-pip install opencv-python
-
-# Run
-python main.py
-```
-
-### Workflow
-
-1. **Create from scratch** -- use the toolbar to add text, barcodes, QR codes, boxes, lines
-2. **Edit ZPL code** -- type ZPL in the left panel, see it rendered on the right
-3. **Import image** -- click "Import" to load a label PNG, then "Analyze Image" + "Generate ZPL from Image" to convert it to editable ZPL
-4. **Batch process** -- click "Batch Process..." to select multiple images, analyze all, and save `.zpl` files to a folder
-5. **Export** -- save the rendered label as PNG
-
-### ZPL Commands Supported
-
-| Priority | Commands |
-|----------|----------|
-| Core | `^XA` `^XZ` `^FO` `^FT` `^FD` `^FS` `^A` `^CF` `^CI` `^GB` |
-| Barcode | `^BC` (Code128) `^B3` (Code39) `^BE` (EAN13) `^BY` `^BQ` (QR) |
-| Graphics | `^GC` (circle) `^GD` (diagonal) `^GFA` (bitmap) |
-| Layout | `^FB` (field block) `^FW` (orientation) `^PW` `^LL` `^LH` `^FR` |
-| Comment | `^FX` |
-
-## Coordinate System
-
-- Origin: top-left corner (0, 0)
-- X increases to the right, Y increases downward
-- All coordinates in dots (1 dot = 1 pixel at native DPI)
-- Default: 203 DPI (1 mm = 8 dots, 1 inch = 203 dots)
-- Standard 4" x 6" label = 812 x 1218 dots
 
 ## Examples
 
