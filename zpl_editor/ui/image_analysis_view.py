@@ -196,8 +196,6 @@ class ImageAnalysisView(QWidget):
         # (display_name, internal_key_or_None)
         self._engine_options = [
             ("Auto (All Available)", None),
-            ("RapidOCR", "rapidocr"),
-            ("EasyOCR", "easyocr"),
             ("Tesseract", "tesseract"),
         ]
 

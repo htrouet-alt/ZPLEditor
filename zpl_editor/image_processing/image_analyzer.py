@@ -1,7 +1,7 @@
 """
 Image analyzer for detecting barcodes, QR codes, text, lines, boxes, and image regions.
 Uses OpenCV for image processing, pyzbar for barcode detection,
-and RapidOCR (ONNX Runtime) for text recognition.
+and Tesseract for text recognition.
 """
 import cv2
 import numpy as np
@@ -26,29 +26,20 @@ class DetectedRegion:
 
 
 class ImageAnalyzer:
-    _ocr_reader = None  # Singleton: RapidOCR shared across instances
-    _easyocr_reader = None  # Singleton: EasyOCR shared across instances
 
     def __init__(self, enabled_engines=None, tesseract_path=None):
         """Initialize image analyzer.
 
         Args:
             enabled_engines: Optional set of engine names to enable.
-                Valid values: {"rapidocr", "easyocr", "tesseract"}.
-                If None, auto-detect all available engines (default).
-                If provided, only listed engines that are actually installed
-                will be enabled.
+                Valid values: {"tesseract"}.
+                If None, auto-detect available engines (default).
             tesseract_path: Path to tesseract executable. If None, uses default.
         """
         from ..utils.settings import DEFAULT_TESSERACT_PATH
         self._tesseract_path = tesseract_path or DEFAULT_TESSERACT_PATH
         self._has_pyzbar = importlib.util.find_spec("pyzbar") is not None
 
-        # Auto-detect availability (lightweight check via find_spec).
-        # Actual engine init is lazy -- if DLLs fail at runtime,
-        # the singleton pattern handles it gracefully and falls through.
-        rapidocr_available = importlib.util.find_spec("rapidocr_onnxruntime") is not None
-        easyocr_available = importlib.util.find_spec("easyocr") is not None
         tesseract_available = False
         try:
             import pytesseract
@@ -58,57 +49,17 @@ class ImageAnalyzer:
         except Exception:
             pass
 
-        # Apply engine filter if provided
         if enabled_engines is None:
-            self._has_ocr = rapidocr_available
-            self._has_easyocr = easyocr_available
             self._has_tesseract = tesseract_available
         else:
-            self._has_ocr = rapidocr_available and "rapidocr" in enabled_engines
-            self._has_easyocr = easyocr_available and "easyocr" in enabled_engines
             self._has_tesseract = tesseract_available and "tesseract" in enabled_engines
-
-    @classmethod
-    def _get_ocr_reader(cls):
-        """Get or create the shared RapidOCR engine. Returns None on failure."""
-        if cls._ocr_reader is False:
-            return None
-        if cls._ocr_reader is None:
-            try:
-                from rapidocr_onnxruntime import RapidOCR
-                cls._ocr_reader = RapidOCR()
-            except Exception as e:
-                print(f"[ImageAnalyzer] Failed to init RapidOCR: {e}")
-                cls._ocr_reader = False
-                return None
-        return cls._ocr_reader
-
-    @classmethod
-    def _get_easyocr_reader(cls):
-        """Get or create the shared EasyOCR engine (downloads models on first use).
-        Returns None on failure."""
-        if cls._easyocr_reader is False:
-            return None
-        if cls._easyocr_reader is None:
-            try:
-                import easyocr
-                cls._easyocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
-                print("[ImageAnalyzer] EasyOCR initialized")
-            except Exception as e:
-                print(f"[ImageAnalyzer] Failed to init EasyOCR: {e}")
-                cls._easyocr_reader = False
-                return None
-        return cls._easyocr_reader
 
     @staticmethod
     def get_available_engines(tesseract_path=None):
-        """Return a dict of engine name -> is_available (bool).
-        Uses lightweight find_spec check. Actual init is lazy at runtime."""
+        """Return a dict of engine name -> is_available (bool)."""
         from ..utils.settings import DEFAULT_TESSERACT_PATH
         tess_path = tesseract_path or DEFAULT_TESSERACT_PATH
         available = {
-            "rapidocr": importlib.util.find_spec("rapidocr_onnxruntime") is not None,
-            "easyocr": importlib.util.find_spec("easyocr") is not None,
             "tesseract": False,
         }
         try:
@@ -121,38 +72,10 @@ class ImageAnalyzer:
         return available
 
     def _ocr_crop_text(self, crop: np.ndarray) -> str:
-        """Run OCR on a preprocessed grayscale crop.
-        Tries RapidOCR → EasyOCR → Tesseract (in that order)."""
+        """Run OCR on a preprocessed grayscale crop using Tesseract."""
         best_text = ""
 
-        # 1. RapidOCR (fastest, pure pip)
-        if self._has_ocr:
-            engine = self._get_ocr_reader()
-            if engine is not None:
-                try:
-                    result, _ = engine(crop)
-                    if result:
-                        texts = [t.strip() for _, t, c in result if c > 0.3 and t.strip()]
-                        if texts:
-                            best_text = " ".join(texts)
-                except Exception:
-                    pass
-
-        # 2. EasyOCR (pure pip, needs PyTorch)
-        if not best_text and self._has_easyocr:
-            reader = self._get_easyocr_reader()
-            if reader is not None:
-                try:
-                    results = reader.readtext(crop)
-                    if results:
-                        texts = [t.strip() for _, t, c in results if c > 0.3 and t.strip()]
-                        if texts:
-                            best_text = " ".join(texts)
-                except Exception:
-                    pass
-
-        # 3. Tesseract (requires system install, fallback)
-        if not best_text and self._has_tesseract:
+        if self._has_tesseract:
             try:
                 import pytesseract
                 pytesseract.pytesseract.tesseract_cmd = self._tesseract_path
@@ -173,13 +96,12 @@ class ImageAnalyzer:
         return best_text.replace('\n', ' ').strip()
 
     def _ocr_results_to_word_blocks(self, ocr_results, scale: float, img_h: int) -> list:
-        """Convert RapidOCR/EasyOCR line-level results to word-level blocks.
-        OCR engines return line-level bboxes; this splits multi-word results
-        into individual word blocks with proportionally allocated widths.
+        """Convert OCR line-level results to word-level blocks.
+        Splits multi-word results into individual word blocks with
+        proportionally allocated widths.
 
         ocr_results: list of (bbox, text, confidence) tuples
-          - RapidOCR bbox: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]]
-          - EasyOCR bbox: same format
+          - bbox: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]]
         """
         blocks = []
         for item in ocr_results:
@@ -996,9 +918,7 @@ class ImageAnalyzer:
         text_regions = []
 
         # Tesseract has word-level image_to_data() which gives best results
-        # with the grouped detection algorithm. RapidOCR/EasyOCR return line-level
-        # results, so they work better through _detect_text_fallback path which
-        # uses their native detection parsers (_detect_text_rapidocr/_detect_text_easyocr).
+        # with the grouped detection algorithm.
         if self._has_tesseract:
             text_regions = self._detect_text_grouped(gray, existing)
 
@@ -1182,8 +1102,7 @@ class ImageAnalyzer:
             return None
 
     def _get_word_blocks(self, gray: np.ndarray) -> list:
-        """Get word-level text blocks using available OCR engines.
-        Priority: RapidOCR → EasyOCR → Tesseract.
+        """Get word-level text blocks using Tesseract.
         Scales image 2x for better OCR accuracy on small text."""
         scale = 2.0
         big = cv2.resize(gray, None, fx=scale, fy=scale,
@@ -1191,33 +1110,6 @@ class ImageAnalyzer:
         img_h = gray.shape[0]
         blocks = []
 
-        # 1. Try RapidOCR first (fastest, pure pip)
-        if self._has_ocr:
-            engine = self._get_ocr_reader()
-            if engine is not None:
-                try:
-                    result, _ = engine(big)
-                    if result:
-                        blocks = self._ocr_results_to_word_blocks(result, scale, img_h)
-                        if blocks:
-                            return blocks
-                except Exception as e:
-                    print(f"[ImageAnalyzer] RapidOCR word blocks error: {e}")
-
-        # 2. Try EasyOCR (pure pip)
-        if self._has_easyocr:
-            reader = self._get_easyocr_reader()
-            if reader is not None:
-                try:
-                    results = reader.readtext(big)
-                    if results:
-                        blocks = self._ocr_results_to_word_blocks(results, scale, img_h)
-                        if blocks:
-                            return blocks
-                except Exception as e:
-                    print(f"[ImageAnalyzer] EasyOCR word blocks error: {e}")
-
-        # 3. Tesseract fallback (requires system install)
         if self._has_tesseract:
             try:
                 import pytesseract
@@ -1265,8 +1157,8 @@ class ImageAnalyzer:
 
     def _detect_text_fallback(self, image: np.ndarray, gray: np.ndarray,
                                existing: List[DetectedRegion]) -> List[DetectedRegion]:
-        """Fallback text detection using multi-engine OCR + morphology."""
-        has_any_ocr = self._has_ocr or self._has_easyocr or self._has_tesseract
+        """Fallback text detection using Tesseract OCR + morphology."""
+        has_any_ocr = self._has_tesseract
         img_h, img_w = gray.shape[:2]
 
         ocr_regions = []
@@ -1303,39 +1195,13 @@ class ImageAnalyzer:
 
     def _detect_text_ocr(self, image: np.ndarray, gray: np.ndarray,
                          existing: List[DetectedRegion]) -> List[DetectedRegion]:
-        """Detect text using all available OCR engines and combine results.
-        Priority: RapidOCR → EasyOCR → Tesseract."""
-        img_h, img_w = gray.shape[:2]
+        """Detect text using Tesseract OCR."""
+        combined = []
 
-        # Step 1: Run RapidOCR (fastest, pure pip)
-        rapid_results = self._detect_text_rapidocr(image, gray, existing)
-        combined = list(rapid_results)
-
-        # Step 2: EasyOCR (catches anti-aliased text RapidOCR misses)
-        if self._has_easyocr and len(combined) < 3:
-            easy_results = self._detect_text_easyocr(image, gray, existing)
-            for er in easy_results:
-                if not self._overlaps_any(er, combined):
-                    combined.append(er)
-            print(f"[ImageAnalyzer] EasyOCR found {len(easy_results)} text regions "
-                  f"(combined total: {len(combined)})")
-
-        # Step 3: Tesseract fallback (if available and still sparse)
-        if self._has_tesseract and len(combined) < 3:
+        if self._has_tesseract:
             tess_results = self._detect_text_tesseract(gray, existing)
-            new_from_tess = 0
-            for tr in tess_results:
-                if self._overlaps_any(tr, combined):
-                    continue
-                if tr.data and any(
-                    c.data and tr.data in c.data
-                    for c in combined
-                ):
-                    continue
-                combined.append(tr)
-                new_from_tess += 1
-            print(f"[ImageAnalyzer] Tesseract found {len(tess_results)} text regions "
-                  f"({new_from_tess} new after merge)")
+            combined.extend(tess_results)
+            print(f"[ImageAnalyzer] Tesseract found {len(tess_results)} text regions")
 
         return combined
 
@@ -1462,132 +1328,6 @@ class ImageAnalyzer:
                 current = w
         merged.append(current)
         return merged
-
-    def _detect_text_rapidocr(self, image: np.ndarray, gray: np.ndarray,
-                              existing: List[DetectedRegion]) -> List[DetectedRegion]:
-        """Detect and recognize text using RapidOCR with multiple preprocessing attempts."""
-        engine = self._get_ocr_reader()
-        if engine is None:
-            return []
-
-        try:
-            img_h, img_w = gray.shape[:2]
-            scale = 1.0
-
-            # Prepare base image - scale to good OCR size range
-            base_img = image if len(image.shape) == 3 else gray
-            max_dim = max(img_h, img_w)
-            if max_dim > 1500:
-                scale = 1500.0 / max_dim
-                new_w, new_h = int(img_w * scale), int(img_h * scale)
-                base_img = cv2.resize(base_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                print(f"[ImageAnalyzer] Downscaled for OCR: {img_w}x{img_h} -> {new_w}x{new_h}")
-            elif max_dim < 600:
-                scale = 800.0 / max_dim
-                new_w, new_h = int(img_w * scale), int(img_h * scale)
-                base_img = cv2.resize(base_img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-                print(f"[ImageAnalyzer] Upscaled for OCR: {img_w}x{img_h} -> {new_w}x{new_h}")
-
-            gray_scaled = cv2.cvtColor(base_img, cv2.COLOR_BGR2GRAY) if len(base_img.shape) == 3 else base_img
-            images_to_try = self._clean_for_ocr(gray_scaled)
-
-            best_results = []
-            for name, ocr_img in images_to_try:
-                ocr_results, _ = engine(ocr_img)
-                if ocr_results is None:
-                    continue
-
-                current = self._parse_ocr_results(ocr_results, scale, img_h, img_w, existing)
-                print(f"[ImageAnalyzer] RapidOCR ({name}) found {len(ocr_results)} items -> {len(current)} valid")
-
-                if len(current) > len(best_results):
-                    best_results = current
-
-                if name == "original" and len(current) >= 3:
-                    break
-
-            return best_results
-        except Exception as e:
-            print(f"[ImageAnalyzer] RapidOCR error: {e}")
-            traceback.print_exc()
-        return []
-
-    def _detect_text_easyocr(self, image: np.ndarray, gray: np.ndarray,
-                             existing: List[DetectedRegion]) -> List[DetectedRegion]:
-        """Detect text using EasyOCR with dilate→erode cleaned preprocessing."""
-        reader = self._get_easyocr_reader()
-        if reader is None:
-            return []
-
-        try:
-            img_h, img_w = gray.shape[:2]
-            scale = 1.0
-
-            # Prepare base image
-            base_img = gray.copy()
-            max_dim = max(img_h, img_w)
-            if max_dim > 1500:
-                scale = 1500.0 / max_dim
-                new_w, new_h = int(img_w * scale), int(img_h * scale)
-                base_img = cv2.resize(base_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            elif max_dim < 600:
-                scale = 800.0 / max_dim
-                new_w, new_h = int(img_w * scale), int(img_h * scale)
-                base_img = cv2.resize(base_img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-
-            images_to_try = self._clean_for_ocr(base_img)
-
-            best_results = []
-            for name, ocr_img in images_to_try:
-                easyocr_results = reader.readtext(ocr_img)
-                if not easyocr_results:
-                    continue
-
-                current = self._parse_easyocr_results(easyocr_results, scale, img_h, img_w, existing)
-                print(f"[ImageAnalyzer] EasyOCR ({name}) found {len(easyocr_results)} items -> {len(current)} valid")
-
-                if len(current) > len(best_results):
-                    best_results = current
-
-                if name == "original" and len(current) >= 3:
-                    break
-
-            return best_results
-        except Exception as e:
-            print(f"[ImageAnalyzer] EasyOCR error: {e}")
-            traceback.print_exc()
-        return []
-
-    def _parse_easyocr_results(self, easyocr_results, scale: float, img_h: int, img_w: int,
-                               existing: List[DetectedRegion]) -> List[DetectedRegion]:
-        """Parse EasyOCR results into DetectedRegion list. EasyOCR format: [(bbox, text, conf), ...]"""
-        results = []
-        for bbox, text, confidence in easyocr_results:
-            if confidence < 0.2:
-                continue
-            text = text.strip()
-            if not text:
-                continue
-
-            pts = np.array(bbox, dtype=np.float64)
-            x = int(pts[:, 0].min() / scale)
-            y = int(pts[:, 1].min() / scale)
-            w = int(pts[:, 0].max() / scale) - x
-            h = int(pts[:, 1].max() / scale) - y
-            if w < 3 or h < 3:
-                continue
-            # Skip oversized regions
-            if h > img_h * 0.15 or w > img_w * 0.8:
-                continue
-            # Skip noise text (tick marks, brackets, etc.)
-            if self._is_noise_text(text, w, h, img_h):
-                continue
-
-            region = DetectedRegion("text", x=x, y=y, width=w, height=h,
-                                    data=text, confidence=confidence)
-            if not self._overlaps_any(region, existing):
-                results.append(region)
-        return results
 
     def _parse_ocr_results(self, ocr_results, scale: float, img_h: int, img_w: int,
                            existing: List[DetectedRegion]) -> List[DetectedRegion]:
@@ -1920,42 +1660,10 @@ class ImageAnalyzer:
         # Generate cleaned variants
         crops_to_try = self._clean_for_ocr(gray_crop)
 
-        # Collect all OCR results and pick the best (longest text with high confidence)
+        # Run Tesseract OCR and pick the best result
         best_text = ""
 
-        # Try RapidOCR first
-        engine = self._get_ocr_reader()
-        if engine is not None:
-            for name, c in crops_to_try:
-                try:
-                    result, _ = engine(c)
-                    if result:
-                        texts = [t.strip() for _, t, c2 in result if c2 > 0.3 and t.strip()]
-                        if texts:
-                            candidate = " ".join(texts)
-                            if len(candidate) > len(best_text):
-                                best_text = candidate
-                except Exception:
-                    pass
-
-        # Try EasyOCR (pure pip, catches anti-aliased text)
-        if not best_text and self._has_easyocr:
-            reader = self._get_easyocr_reader()
-            if reader is not None:
-                for name, c in crops_to_try:
-                    try:
-                        results = reader.readtext(c)
-                        if results:
-                            texts = [t.strip() for _, t, c2 in results if c2 > 0.3 and t.strip()]
-                            if texts:
-                                candidate = " ".join(texts)
-                                if len(candidate) > len(best_text):
-                                    best_text = candidate
-                    except Exception:
-                        pass
-
-        # Tesseract fallback (requires system install)
-        if not best_text and self._has_tesseract:
+        if self._has_tesseract:
             try:
                 import pytesseract
                 preprocessed = []
@@ -1995,7 +1703,7 @@ class ImageAnalyzer:
         """
         results = []
         try:
-            if not self._has_ocr and not self._has_easyocr and not self._has_tesseract:
+            if not self._has_tesseract:
                 return results
 
             img_h, img_w = gray.shape[:2]
@@ -2261,8 +1969,7 @@ class ImageAnalyzer:
                             img_regions: List[DetectedRegion]):
         """Try OCR on image regions to detect large bold text (e.g. 'CA').
         Returns (text_regions, remaining_image_regions)."""
-        has_any_ocr = self._has_ocr or self._has_easyocr or self._has_tesseract
-        if not has_any_ocr or not img_regions:
+        if not self._has_tesseract or not img_regions:
             return [], img_regions
 
         text_regions = []

@@ -10,11 +10,6 @@ block_cipher = None
 # Paths
 VENV_SITE = os.path.join('.venv', 'Lib', 'site-packages')
 
-# Collect data files for key packages
-rapidocr_datas = collect_data_files('rapidocr_onnxruntime', include_py_files=False)
-onnxruntime_datas = collect_data_files('onnxruntime', include_py_files=False)
-easyocr_datas = collect_data_files('easyocr', include_py_files=False)
-
 # pyzbar DLLs
 pyzbar_dir = os.path.join(VENV_SITE, 'pyzbar')
 pyzbar_datas = [
@@ -41,21 +36,15 @@ hidden_imports = [
     'barcode.code128',
     'barcode.code39',
     'requests',
-    'rapidocr_onnxruntime',
-    'onnxruntime',
-    'easyocr',
-    'easyocr.easyocr',
     'PIL',
     'PIL.Image',
 ]
-hidden_imports += collect_submodules('rapidocr_onnxruntime')
-hidden_imports += collect_submodules('onnxruntime')
 
 a = Analysis(
     ['main.py'],
     pathex=['.'],
     binaries=[],
-    datas=rapidocr_datas + onnxruntime_datas + easyocr_datas + pyzbar_datas,
+    datas=pyzbar_datas,
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

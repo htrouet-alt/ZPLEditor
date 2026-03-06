@@ -21,3 +21,5 @@ Traceback (most recent call last):
 PermissionError: [Errno 13] Permission denied: 'C:\\Users\\katif\\Desktop\\Zpl\\Zpl\\log.txt'
 QMainWindow::saveState(): 'objectName' not set for QDockWidget 0x20459ac0d60 'Properties;
 QMainWindow::saveState(): 'objectName' not set for QToolBar 0x204595877e0 'Tools'
+QMainWindow::saveState(): 'objectName' not set for QDockWidget 0x1f4755fc6b0 'Properties;
+QMainWindow::saveState(): 'objectName' not set for QToolBar 0x1f47203c490 'Tools'
