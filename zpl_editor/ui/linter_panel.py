@@ -52,29 +52,51 @@ class LinterPanel(QWidget):
         """)
         layout.addWidget(self._list)
 
-    def validate(self, model: LabelModel) -> list:
+    def validate(self, model: LabelModel, label_w: int = None, label_h: int = None, canvas_elements=None) -> list:
         warnings = []
         settings = model.settings
-        label_w = settings.width
-        label_h = settings.height
+        if label_w is None:
+            label_w = settings.width
+        if label_h is None:
+            label_h = settings.height
+
+        # Check overflow using actual canvas element bounds
+        if canvas_elements:
+            for ce in canvas_elements:
+                x = ce.dot_x
+                y = ce.dot_y
+                w = ce.dot_width
+                h = ce.dot_height
+                etype = ce.element_type
+                if x < 0:
+                    warnings.append({
+                        "level": "warning",
+                        "cmd": "^FO",
+                        "msg": f"{etype.capitalize()} taşıyor: sol kenar ({x}) < 0 — konum ({x},{y})"
+                    })
+                if y < 0:
+                    warnings.append({
+                        "level": "warning",
+                        "cmd": "^FO",
+                        "msg": f"{etype.capitalize()} taşıyor: üst kenar ({y}) < 0 — konum ({x},{y})"
+                    })
+                if x + w > label_w:
+                    warnings.append({
+                        "level": "warning",
+                        "cmd": "^FO",
+                        "msg": f"{etype.capitalize()} taşıyor: sağ kenar ({x + w}) > etiket genişliği ({label_w}) — konum ({x},{y})"
+                    })
+                if y + h > label_h:
+                    warnings.append({
+                        "level": "warning",
+                        "cmd": "^FO",
+                        "msg": f"{etype.capitalize()} taşıyor: alt kenar ({y + h}) > etiket yüksekliği ({label_h}) — konum ({x},{y})"
+                    })
 
         for elem in model.elements:
             x, y = elem.x, elem.y
             props = elem.properties
             etype = elem.element_type
-
-            if y > label_h:
-                warnings.append({
-                    "level": "warning",
-                    "cmd": "^FO",
-                    "msg": f"Value {y} is greater than label height {label_h}; field will not be visible"
-                })
-            if x > label_w:
-                warnings.append({
-                    "level": "warning",
-                    "cmd": "^FO",
-                    "msg": f"Value {x} is greater than label width {label_w}; field will not be visible"
-                })
 
             if etype == "box":
                 w = props.get("width", 0)
@@ -103,18 +125,6 @@ class LinterPanel(QWidget):
                         "level": "info",
                         "cmd": "^GB",
                         "msg": f"Value 0 is less than minimum value 2; used 2 instead (line at x={x})"
-                    })
-                if x + w > label_w:
-                    warnings.append({
-                        "level": "warning",
-                        "cmd": "^GB",
-                        "msg": f"Box extends beyond label width at ({x},{y}): x({x})+w({w})={x+w} > {label_w}"
-                    })
-                if y + h > label_h:
-                    warnings.append({
-                        "level": "warning",
-                        "cmd": "^GB",
-                        "msg": f"Box extends beyond label height at ({x},{y}): y({y})+h({h})={y+h} > {label_h}"
                     })
 
             elif etype == "circle":
@@ -169,9 +179,9 @@ class LinterPanel(QWidget):
 
         return warnings
 
-    def update_warnings(self, model: LabelModel):
+    def update_warnings(self, model: LabelModel, label_w: int = None, label_h: int = None, canvas_elements=None):
         self._list.clear()
-        warnings = self.validate(model)
+        warnings = self.validate(model, label_w, label_h, canvas_elements)
 
         self._count_label.setText(f"({len(warnings)})")
         if len(warnings) > 0:

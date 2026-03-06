@@ -242,11 +242,20 @@ class CanvasScene(QGraphicsScene):
         # White label area
         label_rect = QRectF(0, 0, self._label_width, self._label_height)
         painter.setBrush(QBrush(QColor(255, 255, 255)))
-        painter.setPen(QPen(QColor(160, 160, 160), 1, Qt.PenStyle.SolidLine))
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRect(label_rect)
 
         if self._grid_visible:
             self._draw_grid(painter, label_rect)
+
+    def drawForeground(self, painter: QPainter, rect: QRectF):
+        super().drawForeground(painter, rect)
+        # Red border to show label boundaries (like Labelary)
+        pen = QPen(QColor(255, 0, 0), 3, Qt.PenStyle.SolidLine)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(QRectF(0, 0, self._label_width, self._label_height))
 
     def _draw_grid(self, painter: QPainter, label_rect: QRectF):
         minor_pen = QPen(QColor(230, 230, 230), 0.5)

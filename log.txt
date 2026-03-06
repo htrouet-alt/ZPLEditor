@@ -23,3 +23,24 @@ QMainWindow::saveState(): 'objectName' not set for QDockWidget 0x20459ac0d60 'Pr
 QMainWindow::saveState(): 'objectName' not set for QToolBar 0x204595877e0 'Tools'
 QMainWindow::saveState(): 'objectName' not set for QDockWidget 0x1f4755fc6b0 'Properties;
 QMainWindow::saveState(): 'objectName' not set for QToolBar 0x1f47203c490 'Tools'
+QMainWindow::saveState(): 'objectName' not set for QDockWidget 0x1c0d548fe00 'Properties;
+QMainWindow::saveState(): 'objectName' not set for QToolBar 0x1c0d4f5cdd0 'Tools'
+2026-03-06 16:15:01,062 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:15:19,007 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:16:20,218 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:17:18,876 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:17:55,605 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:18:46,445 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:19:10,908 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:21:15,062 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:21:22,104 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:23:07,049 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:23:53,294 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:24:50,600 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:25:24,041 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:27:18,059 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:28:37,081 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:30:04,218 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:30:36,854 [INFO] ZPLEditor: === ZPL Visual Editor closed ===
+2026-03-06 16:32:32,650 [INFO] ZPLEditor: === ZPL Visual Editor starting ===
+2026-03-06 16:33:00,755 [INFO] ZPLEditor: === ZPL Visual Editor closed ===

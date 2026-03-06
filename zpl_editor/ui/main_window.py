@@ -622,7 +622,7 @@ class MainWindow(QMainWindow):
             
             # Update linter
             try:
-                self._linter_panel.update_warnings(model)
+                self._linter_panel.update_warnings(model, self._scene._label_width, self._scene._label_height, self._scene.get_elements())
             except Exception as e:
                 print(f"[MainWindow] Linter error: {e}")
         except Exception as e:
@@ -640,7 +640,7 @@ class MainWindow(QMainWindow):
                 self._code_editor.set_code(code)
                 self._statusbar.update_info(f"Elements: {len(model.elements)}")
                 try:
-                    self._linter_panel.update_warnings(model)
+                    self._linter_panel.update_warnings(model, self._scene._label_width, self._scene._label_height, self._scene.get_elements())
                 except Exception:
                     pass
             except Exception as e:
