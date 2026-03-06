@@ -5,7 +5,13 @@ cd /d "%~dp0"
 :: Check if .venv exists
 if exist ".venv\Scripts\python.exe" (
     echo Starting ZPL Visual Editor...
-    .venv\Scripts\python.exe main.py
+    .venv\Scripts\python.exe main.py 2>> "%~dp0log.txt"
+    if errorlevel 1 (
+        echo.
+        echo HATA OLUSTU! Detaylar icin log.txt dosyasini kontrol edin.
+        echo.
+        pause
+    )
     goto :end
 )
 
@@ -40,6 +46,12 @@ if errorlevel 1 (
 
 echo.
 echo Setup complete! Starting ZPL Visual Editor...
-.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe main.py 2>> "%~dp0log.txt"
+if errorlevel 1 (
+    echo.
+    echo HATA OLUSTU! Detaylar icin log.txt dosyasini kontrol edin.
+    echo.
+    pause
+)
 
 :end

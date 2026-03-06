@@ -1,0 +1,23 @@
+Traceback (most recent call last):
+  File "C:\Users\katif\Desktop\Zpl\Zpl\main.py", line 8, in <module>
+    logging.basicConfig(
+    ~~~~~~~~~~~~~~~~~~~^
+        filename=LOG_FILE,
+        ^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        encoding="utf-8",
+        ^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\katif\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 2101, in basicConfig
+    h = FileHandler(filename, mode,
+                    encoding=encoding, errors=errors)
+  File "C:\Users\katif\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1219, in __init__
+    StreamHandler.__init__(self, self._open())
+                                 ~~~~~~~~~~^^
+  File "C:\Users\katif\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1248, in _open
+    return open_func(self.baseFilename, self.mode,
+                     encoding=self.encoding, errors=self.errors)
+PermissionError: [Errno 13] Permission denied: 'C:\\Users\\katif\\Desktop\\Zpl\\Zpl\\log.txt'
+QMainWindow::saveState(): 'objectName' not set for QDockWidget 0x20459ac0d60 'Properties;
+QMainWindow::saveState(): 'objectName' not set for QToolBar 0x204595877e0 'Tools'
